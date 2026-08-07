@@ -114,6 +114,8 @@ class FactoryTests(unittest.TestCase):
             self.assertIn("Do not poll another agent's terminal", prompt)
             self.assertIn("send mail only to the Lead", prompt)
             self.assertIn("factory mail builder lead", prompt)
+            self.assertIn("open cross-repository pull request", prompt)
+            self.assertIn("explicit user approval", prompt)
 
     def test_reviewer_prompt_separates_current_findings_from_follow_up_work(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -135,6 +137,8 @@ class FactoryTests(unittest.TestCase):
             prompt = factory.compose_prompt(root, "lead", config["agents"]["lead"])
             self.assertIn("send mail to any non-Lead agent", prompt)
             self.assertIn("factory mail lead RECIPIENT", prompt)
+            self.assertIn("open cross-repository pull request", prompt)
+            self.assertIn("do not push without explicit approval", prompt)
 
     def test_cmux_parses_json_and_rejects_invalid_output(self) -> None:
         completed = subprocess.CompletedProcess(["cmux"], 0, stdout='{"ok": true}\n', stderr="")

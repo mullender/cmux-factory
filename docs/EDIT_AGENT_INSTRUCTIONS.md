@@ -110,6 +110,27 @@ Edit `.factory/roles/reviewer.md` to change this policy. Keep the two report
 sections in `.factory/agents/reviewer/HANDOFF.md` so that the Lead can see the
 scope boundary.
 
+## Protect open pull requests in other repositories
+
+Before a GitHub push, the Lead and Builder must check whether the exact remote
+branch is the head of an open cross-repository pull request. This commonly
+happens when a branch in a fork has an open pull request in an upstream
+repository. A push to the fork would also update the upstream pull request.
+
+Search by branch, then verify each candidate's head repository and
+`isCrossRepository` value:
+
+```sh
+branch=$(git branch --show-current)
+gh search prs --head "$branch" --state open \
+  --json repository,number,url
+```
+
+Do not block on a branch-name match alone. Branch names can be the same in
+unrelated repositories. Block only when the open pull request uses the exact
+remote repository and branch as its head. Show the pull request URL and wait
+for explicit user approval before a push.
+
 ## Edit the defaults for future projects
 
 Change to the cmux-factory clone:
