@@ -22,7 +22,7 @@ from typing import Any, Callable
 
 SOURCE_ROOT = Path(__file__).resolve().parent
 TEMPLATE_ROOT = SOURCE_ROOT / "templates" / "project" / ".factory"
-VERSION = "0.1.0.0"
+VERSION = "0.2.0.0"
 
 
 class FactoryError(RuntimeError):
