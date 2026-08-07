@@ -1,98 +1,152 @@
-# Pull factory updates
+# Update cmux-factory
 
-The installation uses symbolic links into the cloned repository. A fast-forward
-Git pull updates the `factory` command and `/start-factory` skill in place.
-
-## Check for local changes
-
-Change to the installed clone and inspect it:
+The update command refreshes the factory source, installed links, and managed
+project rules. Run it from a project directory:
 
 ```sh
-cd ~/.local/share/cmux-factory
-git status --short
+factory update
 ```
 
-If the command prints local changes, commit them or move them before you pull.
-Do not discard changes that you do not understand.
+The command performs these steps:
 
-## Pull the update
+1. Run `git pull --ff-only` in the cmux-factory clone.
+2. Run the installer again to verify command and skill links.
+3. Add required runtime ignore entries.
+4. Update managed project rules that the project did not change.
+5. Keep project-specific rules and report files that need review.
 
-Run:
+Start a new Lead after an update. Running agents keep the prompt that they
+received when they started.
+
+## Understand managed files
+
+The factory manages these template files:
+
+```text
+.factory/config/*.md
+.factory/roles/*.md
+.factory/agents/*/IDENTITY.md
+```
+
+It does not update project state, handoffs, brain files, or `factory.toml`.
+It does not remove an old managed file when the central template removes it.
+Review and remove obsolete files by hand.
+Project-specific provider commands and agent names stay unchanged.
+
+The factory records template hashes in `.factory/template-state.json`. Commit
+this file with the project brain so that another machine can make the same safe
+update decision.
+
+## Understand update decisions
+
+For each managed file, the command prints one status:
+
+- `CURRENT`: the project already has the latest template.
+- `UPDATED`: only the central template changed, so the project file changed.
+- `LOCAL`: only the project changed, so the project file stayed unchanged.
+- `ADDED`: the central template added a managed file.
+- `REVIEW`: both sides changed, or an old project has no safe baseline.
+
+When the command prints `REVIEW`, it leaves the project file unchanged and
+writes the new template under `.factory/update/`:
+
+```text
+REVIEW  .factory/roles/reviewer.md
+        new template: .factory/update/roles/reviewer.md.new
+```
+
+The command exits with status 2 when review is required.
+
+## Resolve a rule conflict
+
+Compare the project rule with the new template:
 
 ```sh
-git pull --ff-only
-./install
-cmux hooks setup
+diff -u \
+  .factory/roles/reviewer.md \
+  .factory/update/roles/reviewer.md.new
 ```
 
-`--ff-only` stops if the local and remote histories have diverged. It does not
-create an unexpected merge commit. Running `./install` again verifies the
-links and adds any link that a later release needs.
+Choose one resolution.
 
-## Verify the update
-
-Run:
+To use the central template, copy it over the project file and run the update
+again without pulling:
 
 ```sh
-factory version
-factory doctor
+cp .factory/update/roles/reviewer.md.new \
+  .factory/roles/reviewer.md
+factory update --no-pull
 ```
 
-Start a new Codex or Claude session before you use an updated skill. A running
-agent can keep the skill text that it loaded when it started.
-
-## Understand what updates automatically
-
-The pull updates these installed components because they are symbolic links:
-
-- The `factory` command
-- The `/start-factory` skill for Codex
-- The `/start-factory` skill for Claude
-- The templates used by later `factory init` commands
-
-The pull does not change `.factory` directories in existing projects. Each
-project owns those files. Apply a template change by following
-[Edit agent instructions](EDIT_AGENT_INSTRUCTIONS.md#apply-a-default-change-to-an-existing-project).
-
-Projects created before version 0.2.0.0 need one local inbox ignore rule:
+To keep or merge the project rule, edit it and mark the latest template as
+reviewed:
 
 ```sh
-grep -qxF 'inbox/' .factory/.gitignore || \
-  printf '%s\n' 'inbox/' >> .factory/.gitignore
-factory doctor --project
+$EDITOR .factory/roles/reviewer.md
+factory update --no-pull \
+  --accept-current roles/reviewer.md
 ```
 
-## Pull changes to a project brain
+Review and commit the project changes:
 
-If project instructions changed in the project repository, update that project
-separately:
+```sh
+git diff -- .factory
+git add .factory
+git commit -m "chore: update factory rules"
+git push
+```
+
+## Test local template edits
+
+Use the current clone without a Git pull:
 
 ```sh
 cd /path/to/project
-git status --short
-git pull --ff-only
+factory update --no-pull
 ```
 
-Review changes under `.factory/` before you start the next factory session.
+This is useful while you edit files under
+`templates/project/.factory/` in the factory clone.
+
+## Update only commands and skills
+
+Run:
+
+```sh
+factory update --source-only
+```
+
+This updates the source and installer links but does not change a project.
+
+## Update an explicit project
+
+Run:
+
+```sh
+factory update --project /path/to/project
+```
 
 ## Troubleshooting
 
-### Git reports that a fast-forward is not possible
+### Git cannot fast-forward
 
-The installed clone has local commits that are not on the remote branch. Run:
+The factory clone has local commits or a different history. Inspect it before
+you merge or rebase:
 
 ```sh
+cd ~/.local/share/cmux-factory
 git status
 git log --oneline --decorate --graph --all -20
 ```
 
-Review the histories before you merge, rebase, or push. Do not force-push the
-shared branch.
+The update command does not force-push, reset, or discard local changes.
 
-### The command changed but an agent uses old instructions
+### An old project has no template state
 
-Stop the old factory session and start a new Lead. New agents receive fresh
-prompts when `factory start` launches them.
+The command adopts files that exactly match the latest template. It marks
+different files as `REVIEW` because it cannot know whether they are old or
+project-specific. Resolve each reported file once. Later updates can then make
+safe decisions from the recorded baseline.
 
 ## Related guides
 

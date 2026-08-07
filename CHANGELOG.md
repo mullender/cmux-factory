@@ -2,6 +2,18 @@
 
 This file records user-visible changes to cmux-factory.
 
+## [0.3.0.0] - 2026-08-07
+
+### Added
+
+- Update the factory source, command links, skill links, and managed project rules with `factory update`.
+- Keep a template baseline so updates can preserve local project rules and identify conflicts.
+- Review conflicting central rules under `.factory/update/` before you accept or merge them.
+
+### Changed
+
+- Let `factory init` add safe update metadata without replacing existing project rules.
+
 ## [0.2.1.0] - 2026-08-07
 
 ### Changed

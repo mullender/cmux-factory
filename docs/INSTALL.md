@@ -103,4 +103,4 @@ accepts the generated prompt as an argument.
 ## Related guides
 
 - [Edit agent instructions](EDIT_AGENT_INSTRUCTIONS.md)
-- [Pull factory updates](UPDATING.md)
+- [Update cmux-factory](UPDATING.md)

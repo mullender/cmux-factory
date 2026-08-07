@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -22,11 +23,27 @@ from typing import Any, Callable
 
 SOURCE_ROOT = Path(__file__).resolve().parent
 TEMPLATE_ROOT = SOURCE_ROOT / "templates" / "project" / ".factory"
-VERSION = "0.2.1.0"
+VERSION = "0.3.0.0"
+TEMPLATE_STATE_FORMAT = 1
+MANAGED_TEMPLATE_PATTERNS = (
+    "config/*.md",
+    "roles/*.md",
+    "agents/*/IDENTITY.md",
+)
+RUNTIME_IGNORE_ENTRIES = ("run/", "inbox/", "update/", "agents/*/STATUS.json")
 
 
 class FactoryError(RuntimeError):
     """A clear operator error."""
+
+
+def current_source_version() -> str:
+    path = SOURCE_ROOT / "VERSION"
+    try:
+        value = path.read_text().strip()
+    except OSError:
+        return VERSION
+    return value or VERSION
 
 
 def utc_now() -> str:
@@ -238,20 +255,177 @@ def atomic_json(path: Path, value: Any) -> None:
             pass
 
 
-def atomic_text(path: Path, value: str) -> None:
+def atomic_text(path: Path, value: str, *, mode: int | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if mode is None and path.is_file():
+        mode = path.stat().st_mode & 0o777
     descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
         with os.fdopen(descriptor, "w") as stream:
             stream.write(value)
             stream.flush()
             os.fsync(stream.fileno())
+        if mode is not None:
+            os.chmod(temporary, mode)
         os.replace(temporary, path)
     finally:
         try:
             os.unlink(temporary)
         except FileNotFoundError:
             pass
+
+
+def file_sha256(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def managed_template_files(template_root: Path | None = None) -> dict[str, Path]:
+    source = template_root or TEMPLATE_ROOT
+    files: dict[str, Path] = {}
+    for pattern in MANAGED_TEMPLATE_PATTERNS:
+        for path in source.glob(pattern):
+            if path.is_file():
+                files[path.relative_to(source).as_posix()] = path
+    return dict(sorted(files.items()))
+
+
+def ensure_runtime_ignore(root: Path) -> list[str]:
+    path = root / ".factory" / ".gitignore"
+    try:
+        lines = path.read_text().splitlines() if path.is_file() else []
+    except OSError as exc:
+        raise FactoryError(f"cannot read {path}: {exc}") from exc
+    missing = [entry for entry in RUNTIME_IGNORE_ENTRIES if entry not in lines]
+    if missing:
+        updated = lines + missing
+        mode = None if path.is_file() else 0o644
+        atomic_text(path, "\n".join(updated) + "\n", mode=mode)
+    return missing
+
+
+def template_state_path(root: Path) -> Path:
+    return root / ".factory" / "template-state.json"
+
+
+def remove_generated_file(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def load_template_state(root: Path) -> dict[str, Any]:
+    path = template_state_path(root)
+    if not path.is_file():
+        return {
+            "format": TEMPLATE_STATE_FORMAT,
+            "factory_version": current_source_version(),
+            "files": {},
+        }
+    try:
+        state = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise FactoryError(f"cannot read {path}: {exc}") from exc
+    if state.get("format") != TEMPLATE_STATE_FORMAT or not isinstance(state.get("files"), dict):
+        raise FactoryError(f"unsupported template state: {path}")
+    return state
+
+
+def adopt_matching_template_files(root: Path, template_root: Path | None = None) -> int:
+    state = load_template_state(root)
+    tracked = state["files"]
+    adopted = 0
+    for relative, source in managed_template_files(template_root).items():
+        if relative in tracked:
+            continue
+        project_file = root / ".factory" / relative
+        source_hash = file_sha256(source)
+        if source_hash is not None and file_sha256(project_file) == source_hash:
+            tracked[relative] = source_hash
+            adopted += 1
+    state["factory_version"] = current_source_version()
+    atomic_json(template_state_path(root), state)
+    return adopted
+
+
+def sync_project_templates(root: Path, template_root: Path | None = None) -> dict[str, list[str]]:
+    state = load_template_state(root)
+    tracked = state["files"]
+    result: dict[str, list[str]] = {
+        "updated": [],
+        "current": [],
+        "local": [],
+        "review": [],
+        "added": [],
+    }
+    review_root = root / ".factory" / "update"
+
+    for relative, source in managed_template_files(template_root).items():
+        project_file = root / ".factory" / relative
+        review_file = review_root / f"{relative}.new"
+        source_hash = file_sha256(source)
+        project_hash = file_sha256(project_file)
+        baseline_hash = tracked.get(relative)
+        if source_hash is None:
+            continue
+
+        if project_hash == source_hash:
+            remove_generated_file(review_file)
+            tracked[relative] = source_hash
+            result["current"].append(relative)
+            continue
+        if project_hash is None and baseline_hash is None:
+            remove_generated_file(review_file)
+            atomic_text(project_file, source.read_text(), mode=source.stat().st_mode & 0o777)
+            tracked[relative] = source_hash
+            result["added"].append(relative)
+            continue
+        if baseline_hash is not None and project_hash == baseline_hash:
+            remove_generated_file(review_file)
+            atomic_text(project_file, source.read_text(), mode=source.stat().st_mode & 0o777)
+            tracked[relative] = source_hash
+            result["updated"].append(relative)
+            continue
+        if baseline_hash is not None and source_hash == baseline_hash:
+            remove_generated_file(review_file)
+            result["local"].append(relative)
+            continue
+
+        atomic_text(review_file, source.read_text())
+        result["review"].append(relative)
+
+    state["factory_version"] = current_source_version()
+    atomic_json(template_state_path(root), state)
+    return result
+
+
+def accept_current_templates(
+    root: Path,
+    relatives: list[str],
+    template_root: Path | None = None,
+) -> list[str]:
+    sources = managed_template_files(template_root)
+    state = load_template_state(root)
+    accepted: list[str] = []
+    for value in relatives:
+        relative = value.removeprefix(".factory/")
+        source = sources.get(relative)
+        if source is None:
+            raise FactoryError(f"not a managed template file: {value}")
+        project_file = root / ".factory" / relative
+        if not project_file.is_file():
+            raise FactoryError(f"project file is missing: .factory/{relative}")
+        source_hash = file_sha256(source)
+        if source_hash is None:
+            raise FactoryError(f"template file is missing: {source}")
+        state["files"][relative] = source_hash
+        remove_generated_file(root / ".factory" / "update" / f"{relative}.new")
+        accepted.append(relative)
+    state["factory_version"] = current_source_version()
+    atomic_json(template_state_path(root), state)
+    return accepted
 
 
 def append_jsonl(path: Path, value: dict[str, Any]) -> None:
@@ -375,12 +549,16 @@ def command_init(args: argparse.Namespace) -> int:
     target = root / ".factory"
     if target.exists():
         load_config(root)
+        ensure_runtime_ignore(root)
+        adopt_matching_template_files(root)
         print(f"READY {target}")
         print_next_steps(root)
         return 0
     shutil.copytree(TEMPLATE_ROOT, target)
     config = target / "factory.toml"
     config.write_text(config.read_text().replace('name = "project-name"', f'name = {json.dumps(root.name)}'))
+    ensure_runtime_ignore(root)
+    adopt_matching_template_files(root)
     print(f"INIT  {target}")
     print_next_steps(root)
     return 0
@@ -395,6 +573,79 @@ def command_version(_: argparse.Namespace) -> int:
     print(f"source {SOURCE_ROOT}")
     print(f"git {commit_text}{suffix}")
     return 0
+
+
+def print_process_output(result: subprocess.CompletedProcess[str]) -> None:
+    for value in (result.stdout.strip(), result.stderr.strip()):
+        if value:
+            print(value)
+
+
+def command_update(args: argparse.Namespace) -> int:
+    if args.source_only and args.accept_current:
+        raise FactoryError("--source-only cannot be combined with --accept-current")
+    if args.no_pull:
+        print(f"SOURCE keep local files at {SOURCE_ROOT}")
+    else:
+        pull = run_text(["git", "-C", str(SOURCE_ROOT), "pull", "--ff-only"])
+        print_process_output(pull)
+        print(f"SOURCE updated {SOURCE_ROOT}")
+
+    if not args.skip_install:
+        installer = SOURCE_ROOT / "install"
+        if not installer.is_file():
+            raise FactoryError(f"installer is missing: {installer}")
+        installed = run_text([str(installer)])
+        print_process_output(installed)
+
+    if args.source_only:
+        print(f"UPDATE source-only version={current_source_version()}")
+        return 0
+
+    if not args.no_pull:
+        refreshed_command = [
+            sys.executable,
+            str(SOURCE_ROOT / "factory.py"),
+            "update",
+            "--no-pull",
+            "--skip-install",
+        ]
+        if args.project is not None:
+            refreshed_command.extend(["--project", args.project])
+        for relative in args.accept_current:
+            refreshed_command.extend(["--accept-current", relative])
+        refreshed = run_text(refreshed_command, check=False)
+        print_process_output(refreshed)
+        return refreshed.returncode
+
+    try:
+        root = project_root(args.project)
+    except FactoryError:
+        if args.project is not None or args.accept_current:
+            raise
+        print("PROJECT skip; no .factory directory in the current path")
+        print(f"UPDATE source version={current_source_version()}")
+        return 0
+
+    ignore_entries = ensure_runtime_ignore(root)
+    if ignore_entries:
+        print(f"UPDATED .factory/.gitignore: added {', '.join(ignore_entries)}")
+    accepted = accept_current_templates(root, args.accept_current)
+    for relative in accepted:
+        print(f"ACCEPT  .factory/{relative}")
+    result = sync_project_templates(root)
+    for status in ("added", "updated", "current", "local"):
+        for relative in result[status]:
+            print(f"{status.upper():<7} .factory/{relative}")
+    for relative in result["review"]:
+        print(f"REVIEW  .factory/{relative}")
+        print(f"        new template: .factory/update/{relative}.new")
+    print(
+        f"UPDATE project={root} version={current_source_version()} "
+        f"updated={len(result['updated']) + len(result['added'])} "
+        f"review={len(result['review'])}"
+    )
+    return 2 if result["review"] else 0
 
 
 def doctor_check(label: str, action: Callable[[], str]) -> tuple[bool, str]:
@@ -454,7 +705,7 @@ def command_doctor(args: argparse.Namespace) -> int:
 
     def check_ignore() -> str:
         text = ignore.read_text()
-        required = {"run/", "inbox/", "agents/*/STATUS.json"}
+        required = set(RUNTIME_IGNORE_ENTRIES)
         missing = sorted(item for item in required if item not in text.splitlines())
         if missing:
             raise FactoryError(f"missing entries: {', '.join(missing)}")
@@ -954,6 +1205,20 @@ def parser() -> argparse.ArgumentParser:
 
     version = subparsers.add_parser("version", help="show source and version")
     version.set_defaults(handler=command_version)
+
+    update = subparsers.add_parser("update", help="update the factory source, links, and project rules")
+    add_project_option(update)
+    update.add_argument("--no-pull", action="store_true", help="use the current local factory source")
+    update.add_argument("--source-only", action="store_true", help="do not update a project .factory directory")
+    update.add_argument(
+        "--accept-current",
+        action="append",
+        default=[],
+        metavar="FILE",
+        help="keep a reviewed project file and mark the latest template as handled",
+    )
+    update.add_argument("--skip-install", action="store_true", help=argparse.SUPPRESS)
+    update.set_defaults(handler=command_update)
 
     doctor = subparsers.add_parser("doctor", help="check machine and project setup")
     add_project_option(doctor)

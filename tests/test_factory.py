@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -49,6 +50,80 @@ class FactoryTests(unittest.TestCase):
             self.assertEqual(config["name"], root.name)
             self.assertTrue((root / ".factory/config/OPERATING_RULES.md").is_file())
             self.assertTrue((root / ".factory/brain/NOW.md").is_file())
+            state = json.loads((root / ".factory/template-state.json").read_text())
+            self.assertEqual(state["format"], 1)
+            self.assertIn("roles/reviewer.md", state["files"])
+
+    def test_update_replaces_an_unchanged_managed_rule(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            root.mkdir()
+            self.init_project(root)
+            template = base / "template"
+            shutil.copytree(factory.TEMPLATE_ROOT, template)
+            reviewer = template / "roles/reviewer.md"
+            reviewer.write_text(reviewer.read_text() + "\n- New upstream rule.\n")
+
+            result = factory.sync_project_templates(root, template)
+
+            self.assertIn("roles/reviewer.md", result["updated"])
+            self.assertIn("New upstream rule", (root / ".factory/roles/reviewer.md").read_text())
+            self.assertEqual(result["review"], [])
+
+    def test_update_preserves_a_local_rule_and_writes_the_new_template_for_review(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            root.mkdir()
+            self.init_project(root)
+            project_rule = root / ".factory/roles/reviewer.md"
+            project_rule.write_text(project_rule.read_text() + "\n- Local project rule.\n")
+            template = base / "template"
+            shutil.copytree(factory.TEMPLATE_ROOT, template)
+            upstream_rule = template / "roles/reviewer.md"
+            upstream_rule.write_text(upstream_rule.read_text() + "\n- New upstream rule.\n")
+
+            result = factory.sync_project_templates(root, template)
+
+            self.assertIn("roles/reviewer.md", result["review"])
+            self.assertIn("Local project rule", project_rule.read_text())
+            review = root / ".factory/update/roles/reviewer.md.new"
+            self.assertIn("New upstream rule", review.read_text())
+
+            accepted = factory.accept_current_templates(root, ["roles/reviewer.md"], template)
+            resolved = factory.sync_project_templates(root, template)
+
+            self.assertEqual(accepted, ["roles/reviewer.md"])
+            self.assertFalse(review.exists())
+            self.assertIn("roles/reviewer.md", resolved["local"])
+            self.assertEqual(resolved["review"], [])
+
+    def test_update_keeps_a_local_rule_when_the_template_did_not_change(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.init_project(root)
+            project_rule = root / ".factory/roles/reviewer.md"
+            project_rule.write_text(project_rule.read_text() + "\n- Local project rule.\n")
+
+            result = factory.sync_project_templates(root)
+
+            self.assertIn("roles/reviewer.md", result["local"])
+            self.assertEqual(result["review"], [])
+            self.assertIn("Local project rule", project_rule.read_text())
+
+    def test_update_does_not_guess_when_an_existing_project_has_no_template_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.init_project(root)
+            (root / ".factory/template-state.json").unlink()
+            project_rule = root / ".factory/roles/reviewer.md"
+            project_rule.write_text(project_rule.read_text() + "\n- Existing project rule.\n")
+
+            result = factory.sync_project_templates(root)
+
+            self.assertIn("roles/reviewer.md", result["review"])
+            self.assertIn("Existing project rule", project_rule.read_text())
 
     def test_init_is_idempotent_and_does_not_replace_existing_factory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -184,6 +259,70 @@ class FactoryTests(unittest.TestCase):
             self.assertRaisesRegex(factory.FactoryError, "bad input"),
         ):
             factory.run_text(["tool", "argument"])
+
+    def test_update_pulls_installs_and_restarts_with_the_new_source(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.init_project(root)
+            calls: list[list[str]] = []
+
+            def fake_run(command: list[str], *, check: bool = True):
+                calls.append(command)
+                return subprocess.CompletedProcess(command, 0, stdout="ok\n", stderr="")
+
+            with (
+                mock.patch.object(factory, "run_text", side_effect=fake_run),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                code = factory.command_update(
+                    argparse.Namespace(
+                        project=str(root),
+                        no_pull=False,
+                        source_only=False,
+                        accept_current=[],
+                        skip_install=False,
+                    )
+                )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(calls[0][-2:], ["pull", "--ff-only"])
+            self.assertEqual(calls[1], [str(factory.SOURCE_ROOT / "install")])
+            self.assertIn("--no-pull", calls[2])
+            self.assertIn("--skip-install", calls[2])
+            self.assertEqual(calls[2][-2:], ["--project", str(root)])
+
+    def test_update_without_pull_syncs_the_project(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.init_project(root)
+            sync_result = {
+                "updated": ["roles/reviewer.md"],
+                "current": [],
+                "local": [],
+                "review": [],
+                "added": [],
+            }
+            with (
+                mock.patch.object(
+                    factory,
+                    "run_text",
+                    return_value=subprocess.CompletedProcess([], 0, stdout="ok\n", stderr=""),
+                ),
+                mock.patch.object(factory, "sync_project_templates", return_value=sync_result) as sync,
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                code = factory.command_update(
+                    argparse.Namespace(
+                        project=str(root),
+                        no_pull=True,
+                        source_only=False,
+                        accept_current=[],
+                        skip_install=False,
+                    )
+                )
+
+            self.assertEqual(code, 0)
+            sync.assert_called_once_with(root.resolve())
 
     def test_start_builds_tabs_and_records_exact_ids(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
