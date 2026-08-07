@@ -143,8 +143,12 @@ factory init</code></pre></div><p>A second run changes nothing and prints READY.
         <article><h3>Follow watchdog actions</h3><div class="command"><pre><code>factory events --follow</code></pre></div></article>
         <article><h3>Get JSON status</h3><div class="command"><pre><code>factory status --json</code></pre></div></article>
         <article><h3>Record feedback</h3><div class="command"><pre><code>factory note "Keep the next change smaller"</code></pre></div></article>
+        <article><h3>Read Lead mail</h3><div class="command"><pre><code>factory inbox lead
+factory inbox lead --archive</code></pre></div></article>
+        <article><h3>Send agent mail</h3><div class="command"><pre><code>factory mail builder lead \
+  "The change is ready" --kind handoff</code></pre></div></article>
       </div>
-      <aside class="callout"><strong>Event-based monitoring.</strong> The watchdog listens to structured cmux events. It does not poll agent screens. Use <code>read-screen</code> only for a specific diagnosis.</aside>
+      <aside class="callout"><strong>Watchdog-owned monitoring.</strong> The Watchdog uses structured cmux events first and can use a targeted <code>read-screen</code>. The Lead checks only <code>.factory/inbox/lead/</code>.</aside>
       <aside class="callout warning"><strong>POC limit.</strong> The watchdog reports a closed agent. It does not restart the agent.</aside>
     </section>
 
@@ -253,6 +257,8 @@ factory stop</code></pre></div>
         <div><code>factory status [--json]</code><span>Show agents and surface health</span></div>
         <div><code>factory events [--follow]</code><span>Read watchdog decisions</span></div>
         <div><code>factory check-in …</code><span>Record agent state</span></div>
+        <div><code>factory mail FROM TO TEXT</code><span>Write agent mail</span></div>
+        <div><code>factory inbox AGENT</code><span>Read or archive agent mail</span></div>
         <div><code>factory note TEXT</code><span>Record process feedback</span></div>
         <div><code>factory stop</code><span>Interrupt workers and watchdog</span></div>
         <div><code>factory version</code><span>Show source and revision</span></div>

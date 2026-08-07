@@ -110,6 +110,8 @@ class FactoryTests(unittest.TestCase):
             self.assertIn("only agent that can edit project source", prompt)
             self.assertIn("You implement one bounded assignment", prompt)
             self.assertIn("factory check-in builder", prompt)
+            self.assertIn("factory inbox builder", prompt)
+            self.assertIn("Do not poll another agent's terminal", prompt)
 
     def test_cmux_parses_json_and_rejects_invalid_output(self) -> None:
         completed = subprocess.CompletedProcess(["cmux"], 0, stdout='{"ok": true}\n', stderr="")
@@ -184,6 +186,7 @@ class FactoryTests(unittest.TestCase):
             self.assertEqual(code, 0)
             registry = json.loads((root / ".factory/run/registry.json").read_text())
             self.assertEqual(registry["agents"]["lead"]["surface_id"], "LEAD-SURFACE")
+            self.assertEqual(registry["agents"]["lead"]["state"], "working")
             self.assertEqual(registry["agents"]["builder"]["surface_id"], "BUILDER-SURFACE")
             self.assertEqual(registry["agents"]["reviewer"]["surface_id"], "REVIEWER-SURFACE")
             self.assertEqual(registry["watchdog"]["surface_id"], "WATCHDOG-SURFACE")
@@ -236,6 +239,9 @@ class FactoryTests(unittest.TestCase):
             self.assertIn("automatic restart is disabled", journal)
             self.assertTrue(any(call[0] == "notify" for call in calls))
             self.assertFalse(any(call[0] == "new-surface" for call in calls))
+            mail = factory.unread_mail(root, "lead")
+            self.assertEqual(len(mail), 1)
+            self.assertIn("Agent `builder` generation 1 closed", mail[0].read_text())
 
     def test_agent_hooks_update_registered_state(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -266,6 +272,31 @@ class FactoryTests(unittest.TestCase):
             )
             idle, _ = factory.with_registry(root)
             self.assertEqual(idle["agents"]["builder"]["state"], "idle")
+
+    def test_permission_request_writes_lead_mail_and_pings_an_idle_lead(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.init_project(root)
+            self.register_factory(root)
+            calls: list[tuple[str, ...]] = []
+
+            event = {
+                "type": "event",
+                "name": "agent.hook.PermissionRequest",
+                "id": "EVENT-2",
+                "workspace_id": "WORKSPACE",
+                "surface_id": "BUILDER",
+                "payload": {"tool_name": "Bash", "command": "git status"},
+            }
+            with mock.patch.object(factory, "cmux", side_effect=lambda *args: (calls.append(args), {"ok": True})[1]):
+                factory.handle_watch_event(root, event)
+
+            registry, _ = factory.with_registry(root)
+            self.assertEqual(registry["agents"]["builder"]["state"], "blocked")
+            mail = factory.unread_mail(root, "lead")
+            self.assertEqual(len(mail), 1)
+            self.assertIn("git status", mail[0].read_text())
+            self.assertTrue(any(call[0] == "send" and "urgent mail" in call[-1] for call in calls))
 
     def test_status_json_is_machine_readable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -338,6 +369,38 @@ class FactoryTests(unittest.TestCase):
                 factory.command_check_in(
                     argparse.Namespace(project=str(root), agent="unknown", state="idle", summary="done")
                 )
+
+    def test_mailbox_writes_reads_and_archives_messages(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.init_project(root)
+            self.register_factory(root, active=False)
+
+            code = factory.command_mail(
+                argparse.Namespace(
+                    project=str(root),
+                    sender="builder",
+                    recipient="lead",
+                    message="The parser change is ready for review.",
+                    kind="handoff",
+                    urgent=False,
+                )
+            )
+            self.assertEqual(code, 0)
+            messages = factory.unread_mail(root, "lead")
+            self.assertEqual(len(messages), 1)
+            self.assertTrue(messages[0].name.endswith(".builder.md"))
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                code = factory.command_inbox(
+                    argparse.Namespace(project=str(root), agent="lead", archive=True)
+                )
+            self.assertEqual(code, 0)
+            self.assertIn("parser change is ready", output.getvalue())
+            self.assertEqual(factory.unread_mail(root, "lead"), [])
+            archived = list((root / ".factory/inbox/archive/lead").glob("*.builder.md"))
+            self.assertEqual(len(archived), 1)
 
     def test_stop_interrupts_workers_and_keeps_the_lead_tab(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -2,6 +2,19 @@
 
 This file records user-visible changes to cmux-factory.
 
+## [0.2.0.0] - 2026-08-07
+
+### Added
+
+- Send agent messages through local inbox files without polling another agent's terminal.
+- Route permission requests and closed-surface details from the Watchdog to the Lead inbox.
+- Ping an idle recipient for urgent mail or notify the user when the recipient is working.
+- Read and archive inbox messages with explicit factory commands.
+
+### Changed
+
+- Make the Watchdog responsible for worker monitoring while the Lead checks only its own inbox.
+
 ## [0.1.0.0] - 2026-08-07
 
 ### Added

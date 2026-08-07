@@ -77,6 +77,27 @@ Run factory doctor --project, then run factory start. You are the Lead.
 
 `factory start` must run inside cmux. The current agent tab becomes the Lead.
 
+## Use the inbox
+
+The Watchdog monitors worker agents. The Lead does not poll their terminals.
+The Lead checks its own inbox at the start and end of each turn:
+
+```sh
+factory inbox lead
+factory inbox lead --archive
+```
+
+Agents can send messages without writing into another active prompt:
+
+```sh
+factory mail builder lead "The change is ready for review" --kind handoff
+factory mail builder lead "I need a decision" --kind blocked --urgent
+```
+
+Urgent mail pings an idle recipient. If the recipient is working, cmux shows a
+notification instead. The Watchdog writes permission requests and closed-tab
+details to the Lead inbox.
+
 ## Next steps
 
 - [Edit agent instructions](EDIT_AGENT_INSTRUCTIONS.md)
