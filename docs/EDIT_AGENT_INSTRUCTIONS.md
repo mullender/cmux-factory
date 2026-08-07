@@ -85,6 +85,10 @@ Watchdog -> cmux events or targeted screen checks -> recipient inbox
 Lead     -> .factory/inbox/lead/ only
 ```
 
+Mail routes through the Lead. Non-Lead agents can send mail only to the Lead,
+and only the Lead can send mail to non-Lead agents. `factory mail` enforces the
+same rule, so a prompt change cannot bypass it.
+
 Inbox files are local runtime data. Git ignores `.factory/inbox/`. Move facts
 that must survive the session into `.factory/brain/`.
 

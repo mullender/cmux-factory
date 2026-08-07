@@ -17,6 +17,8 @@ The current agent becomes the Lead. Keep the user in this session.
 7. Act as the Lead. Assign bounded work and require file-backed evidence.
 8. Check `factory inbox lead` at the start and end of each turn. Do not poll
    worker terminals.
+9. Send worker instructions with `factory mail lead RECIPIENT "MESSAGE"`.
+   Workers and the Watchdog can send mail only to the Lead.
 
 The proof of concept does not restart agents. If the watchdog reports a closed
 surface, tell the user and preserve the last handoff.

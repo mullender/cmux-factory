@@ -112,6 +112,8 @@ class FactoryTests(unittest.TestCase):
             self.assertIn("factory check-in builder", prompt)
             self.assertIn("factory inbox builder", prompt)
             self.assertIn("Do not poll another agent's terminal", prompt)
+            self.assertIn("send mail only to the Lead", prompt)
+            self.assertIn("factory mail builder lead", prompt)
 
     def test_reviewer_prompt_separates_current_findings_from_follow_up_work(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -124,6 +126,15 @@ class FactoryTests(unittest.TestCase):
             self.assertIn("Do not use them to block the current change", prompt)
             self.assertIn("FOLLOW-UP OPPORTUNITIES — NOT PART OF THIS CHANGE", prompt)
             self.assertIn("does not change the current verdict", prompt)
+
+    def test_lead_prompt_can_message_workers(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.init_project(root)
+            config = factory.load_config(root)
+            prompt = factory.compose_prompt(root, "lead", config["agents"]["lead"])
+            self.assertIn("send mail to any non-Lead agent", prompt)
+            self.assertIn("factory mail lead RECIPIENT", prompt)
 
     def test_cmux_parses_json_and_rejects_invalid_output(self) -> None:
         completed = subprocess.CompletedProcess(["cmux"], 0, stdout='{"ok": true}\n', stderr="")
@@ -413,6 +424,60 @@ class FactoryTests(unittest.TestCase):
             self.assertEqual(factory.unread_mail(root, "lead"), [])
             archived = list((root / ".factory/inbox/archive/lead").glob("*.builder.md"))
             self.assertEqual(len(archived), 1)
+
+    def test_mailbox_enforces_lead_only_routing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.init_project(root)
+            self.register_factory(root, active=False)
+
+            def send(sender: str, recipient: str) -> int:
+                return factory.command_mail(
+                    argparse.Namespace(
+                        project=str(root),
+                        sender=sender,
+                        recipient=recipient,
+                        message="Test message",
+                        kind="message",
+                        urgent=False,
+                    )
+                )
+
+            self.assertEqual(send("lead", "builder"), 0)
+            self.assertEqual(send("reviewer", "lead"), 0)
+            self.assertEqual(send("watchdog", "lead"), 0)
+            with self.assertRaisesRegex(factory.FactoryError, "only to the Lead"):
+                send("builder", "reviewer")
+            with self.assertRaisesRegex(factory.FactoryError, "only to the Lead"):
+                send("reviewer", "builder")
+            with self.assertRaisesRegex(factory.FactoryError, "themselves"):
+                send("lead", "lead")
+
+    def test_mailbox_rejects_sender_impersonation_in_an_active_factory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.init_project(root)
+            self.register_factory(root)
+
+            def send(sender: str, recipient: str) -> int:
+                return factory.command_mail(
+                    argparse.Namespace(
+                        project=str(root),
+                        sender=sender,
+                        recipient=recipient,
+                        message="Test message",
+                        kind="message",
+                        urgent=False,
+                    )
+                )
+
+            with (
+                mock.patch.dict(factory.os.environ, {"CMUX_SURFACE_ID": "BUILDER"}),
+                mock.patch.object(factory, "ping_recipient", return_value="stored"),
+            ):
+                self.assertEqual(send("builder", "lead"), 0)
+                with self.assertRaisesRegex(factory.FactoryError, "builder, not lead"):
+                    send("lead", "reviewer")
 
     def test_stop_interrupts_workers_and_keeps_the_lead_tab(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

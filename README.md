@@ -32,11 +32,16 @@ Agents exchange files under `.factory/inbox/<recipient>/`. The Lead checks only
 one short ping to an idle Lead. If the Lead is working, cmux shows a
 notification and does not type into the active prompt.
 
+Mail uses a Lead-centered topology. Builder, Reviewer, and Watchdog can send
+mail only to the Lead. Only the Lead can send mail to a non-Lead agent. The
+`factory mail` command enforces this rule.
+
 Git ignores the inbox because a permission event can contain command text.
 Durable facts and lessons stay under `.factory/brain/`.
 
 ```sh
 factory mail builder lead "The change is ready for review" --kind handoff
+factory mail lead builder "Please add the focused test"
 factory inbox lead
 factory inbox lead --archive
 ```
