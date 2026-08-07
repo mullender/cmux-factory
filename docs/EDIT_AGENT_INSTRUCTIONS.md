@@ -155,6 +155,13 @@ Run the tests before you publish the new defaults:
 python3 -m unittest discover -s tests -v
 ```
 
+Apply the local templates to a project without pulling:
+
+```sh
+cd /path/to/project
+factory update --no-pull
+```
+
 Then review, commit, and push the change:
 
 ```sh
@@ -165,23 +172,22 @@ git push
 ```
 
 Other machines can receive the change with the steps in
-[Pull factory updates](UPDATING.md).
+[Update cmux-factory](UPDATING.md).
 
 ## Apply a default change to an existing project
 
 `factory init` is idempotent. It does not replace or merge an existing
 `.factory` directory. This protects project-specific instructions.
 
-Compare a default file with the project copy:
+Use the update command to apply unchanged rules and preserve project changes:
 
 ```sh
-diff -u \
-  ~/.local/share/cmux-factory/templates/project/.factory/config/STYLE.md \
-  .factory/config/STYLE.md
+factory update
 ```
 
-Apply the useful parts by hand, review the project diff, and commit it in the
-project repository.
+If both copies changed, the command writes the new template under
+`.factory/update/` and asks for review. See [Update cmux-factory](UPDATING.md)
+for the conflict steps.
 
 ## Change an agent provider
 
@@ -207,4 +213,4 @@ does not use a provider SDK.
 ## Related guides
 
 - [Getting started](GETTING_STARTED.md)
-- [Pull factory updates](UPDATING.md)
+- [Update cmux-factory](UPDATING.md)

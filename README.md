@@ -59,8 +59,15 @@ cmux hooks setup
 factory doctor
 ```
 
-The installer creates symlinks. A later `git pull --ff-only` updates the
-installed command and skills in place.
+The installer creates symlinks. Update the source, links, and the nearest
+project rules with:
+
+```sh
+factory update
+```
+
+The command uses `git pull --ff-only`. It keeps project-specific rule changes
+and writes a `.new` file when both the project and central template changed.
 
 ## Documentation
 
@@ -68,13 +75,13 @@ installed command and skills in place.
 - [Install on a fresh machine](docs/INSTALL.md)
 - [Getting started](docs/GETTING_STARTED.md)
 - [Edit agent instructions](docs/EDIT_AGENT_INSTRUCTIONS.md)
-- [Pull factory updates](docs/UPDATING.md)
+- [Update cmux-factory](docs/UPDATING.md)
 
 ## Start a project
 
 Run `factory init` from any directory inside a Git project. It finds the Git
-root. If the factory already exists and has a valid configuration, it changes
-nothing and prints `READY`.
+root. If the factory already exists and has a valid configuration, it preserves
+project rules, refreshes safe metadata, and prints `READY`.
 
 ```sh
 factory init
@@ -111,6 +118,7 @@ Useful commands:
 
 ```sh
 factory status
+factory update
 factory events --follow
 factory check-in builder working "Investigating the parser"
 factory mail builder lead "The parser is ready" --kind handoff

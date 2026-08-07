@@ -77,7 +77,7 @@
         <a class="task-card" href="#edit-project" data-task="edit project instructions rules style roles"><b>06</b><span><strong>Change instructions for one project</strong><small>Rules, style, and roles</small></span></a>
         <a class="task-card" href="#edit-defaults" data-task="edit default template future projects"><b>07</b><span><strong>Change defaults for future projects</strong><small>Edit the central templates</small></span></a>
         <a class="task-card" href="#providers" data-task="change agent provider command muse codex claude"><b>08</b><span><strong>Change an agent provider</strong><small>Keep it provider-neutral</small></span></a>
-        <a class="task-card" href="#update" data-task="pull update latest git skill templates"><b>09</b><span><strong>Pull the latest updates</strong><small>Fast-forward and verify</small></span></a>
+        <a class="task-card" href="#update" data-task="pull update latest git skill templates"><b>09</b><span><strong>Update the factory</strong><small>Commands, skills, and project rules</small></span></a>
         <a class="task-card" href="#session-review" data-task="review session learn feedback lessons improve instructions"><b>10</b><span><strong>Learn from a factory session</strong><small>Turn repeated feedback into rules</small></span></a>
         <a class="task-card" href="#stop" data-task="stop end shutdown session"><b>11</b><span><strong>Stop a factory session</strong><small>Interrupt workers safely</small></span></a>
       </div>
@@ -109,7 +109,7 @@ factory doctor</code></pre></div><p class="success">Done when the cmux binary an
       <header><p class="task-kicker">I want to add the factory to a project</p><h2>Create the project brain</h2><p>Result: the Git root contains a readable <code>.factory</code> directory.</p></header>
       <ol class="steps">
         <li><div><h3>Initialize from any project directory</h3><div class="command"><pre><code>cd <span data-project-path>/path/to/project</span>
-factory init</code></pre></div><p>A second run changes nothing and prints READY.</p></div></li>
+factory init</code></pre></div><p>A second run preserves project rules and prints READY.</p></div></li>
         <li><div><h3>Check the project</h3><div class="command"><pre><code>factory doctor --project</code></pre></div><p class="success">Done when cmux, the project config, worker commands, and ignore rules pass.</p></div></li>
       </ol>
       <aside class="callout"><strong>Safe by default.</strong> If <code>.factory</code> is unknown or invalid, initialization stops. It does not replace the files.</aside>
@@ -211,17 +211,17 @@ role = ".factory/roles/builder.md"</code></pre></div></div></li>
     </section>
 
     <section class="tutorial" id="update">
-      <header><p class="task-kicker">I want the latest factory version</p><h2>Pull updates safely</h2><p>The installed command and skills are links into the clone.</p></header>
+      <header><p class="task-kicker">I want the latest factory version</p><h2>Update commands and project rules</h2><p>The command fast-forwards the clone, verifies links, and safely syncs managed rules.</p></header>
       <ol class="steps">
-        <li><div><h3>Check local work</h3><div class="command"><pre><code>cd ~/.local/share/cmux-factory
-git status --short</code></pre></div><p>Commit or move local changes before you pull.</p></div></li>
-        <li><div><h3>Pull and verify links</h3><div class="command"><pre><code>git pull --ff-only
-./install
-cmux hooks setup</code></pre></div></div></li>
+        <li><div><h3>Run the update from your project</h3><div class="command"><pre><code>cd <span data-project-path>/path/to/project</span>
+factory update</code></pre></div><p>Use <code>factory update --no-pull</code> while you test local template edits.</p></div></li>
+        <li><div><h3>Review any rule conflicts</h3><div class="command"><pre><code>diff -u \
+  .factory/roles/reviewer.md \
+  .factory/update/roles/reviewer.md.new</code></pre></div><p>The project file stays unchanged when both copies changed.</p></div></li>
         <li><div><h3>Verify the update</h3><div class="command"><pre><code>factory version
 factory doctor</code></pre></div><p class="success">Start a new Lead so it loads the updated skill.</p></div></li>
       </ol>
-      <aside class="callout"><strong>Project brains stay stable.</strong> A pull does not rewrite existing <code>.factory</code> directories.</aside>
+      <aside class="callout"><strong>Project changes stay safe.</strong> Unchanged rules update automatically. Project-specific rules stay unchanged. A <code>REVIEW</code> result writes the new template to <code>.factory/update/</code>.</aside>
     </section>
 
     <section class="tutorial" id="session-review">
@@ -253,6 +253,7 @@ factory stop</code></pre></div>
       <div class="reference-grid">
         <div><code>factory init [DIR]</code><span>Create or verify a project brain</span></div>
         <div><code>factory doctor --project</code><span>Check cmux, config, and agents</span></div>
+        <div><code>factory update</code><span>Update source, links, and managed rules</span></div>
         <div><code>factory start</code><span>Launch tabs from the Lead</span></div>
         <div><code>factory status [--json]</code><span>Show agents and surface health</span></div>
         <div><code>factory events [--follow]</code><span>Read watchdog decisions</span></div>

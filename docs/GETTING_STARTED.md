@@ -11,8 +11,8 @@ factory init
 ```
 
 The command finds the Git root and creates `.factory` there. If a valid factory
-already exists, the command prints `READY` and changes nothing. This makes the
-command safe to run again.
+already exists, the command preserves project rules, refreshes safe metadata,
+and prints `READY`. This makes the command safe to run again.
 
 Outside a Git project, the command uses the current directory. You can also
 give it a directory:
@@ -106,4 +106,4 @@ details to the Lead inbox.
 ## Next steps
 
 - [Edit agent instructions](EDIT_AGENT_INSTRUCTIONS.md)
-- [Pull factory updates](UPDATING.md)
+- [Update cmux-factory](UPDATING.md)
