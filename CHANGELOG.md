@@ -9,6 +9,7 @@ This file records user-visible changes to cmux-factory.
 - Limit Reviewer blocking findings to defects caused or materially worsened by the current change.
 - Report pre-existing and adjacent issues as separate follow-up opportunities for Lead triage.
 - Give Reviewer handoffs separate sections for the current verdict and later work.
+- Route all agent mail through the Lead and verify the sender against its registered cmux surface.
 
 ## [0.2.0.0] - 2026-08-07
 
