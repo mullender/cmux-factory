@@ -92,7 +92,12 @@ Agents can send messages without writing into another active prompt:
 ```sh
 factory mail builder lead "The change is ready for review" --kind handoff
 factory mail builder lead "I need a decision" --kind blocked --urgent
+factory mail lead builder "Please add the focused test"
 ```
+
+Builder, Reviewer, and Watchdog can send mail only to the Lead. Only the Lead
+can send mail to a non-Lead agent. Workers cannot message each other. The
+command rejects mail that breaks this rule.
 
 Urgent mail pings an idle recipient. If the recipient is working, cmux shows a
 notification instead. The Watchdog writes permission requests and closed-tab

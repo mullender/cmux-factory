@@ -22,7 +22,7 @@ from typing import Any, Callable
 
 SOURCE_ROOT = Path(__file__).resolve().parent
 TEMPLATE_ROOT = SOURCE_ROOT / "templates" / "project" / ".factory"
-VERSION = "0.2.0.0"
+VERSION = "0.2.1.0"
 
 
 class FactoryError(RuntimeError):
@@ -272,12 +272,24 @@ def read_file(root: Path, relative: str) -> str:
 
 
 def compose_prompt(root: Path, name: str, agent: dict[str, Any]) -> str:
+    config = load_config(root)
+    lead_name = next(agent_name for agent_name, data in config["agents"].items() if data.get("current"))
     label = str(agent.get("label") or name.title())
     rules = read_file(root, ".factory/config/OPERATING_RULES.md")
     style = read_file(root, ".factory/config/STYLE.md")
     identity = read_file(root, f".factory/agents/{name}/IDENTITY.md")
     role = read_file(root, str(agent["role"]))
     now = read_file(root, ".factory/brain/NOW.md")
+    if name == lead_name:
+        mail_rule = (
+            f"You can send mail to any non-Lead agent with `factory mail {name} RECIPIENT \"MESSAGE\"`. "
+            "Non-Lead agents can send mail only to you."
+        )
+    else:
+        mail_rule = (
+            f"You can send mail only to the Lead with `factory mail {name} {lead_name} \"MESSAGE\"`. "
+            "Do not message another non-Lead agent."
+        )
     return "\n\n".join(
         [
             f"# Factory identity\n\nYou are {label}, agent `{name}`, in project `{root.name}`.",
@@ -296,8 +308,7 @@ def compose_prompt(root: Path, name: str, agent: dict[str, Any]) -> str:
                 "# Inbox\n\n"
                 f"Run `factory inbox {name}` at the start and end of each turn. "
                 f"After you process all shown messages, run `factory inbox {name} --archive`. "
-                "Do not poll another agent's terminal. Send a message with "
-                f"`factory mail {name} RECIPIENT \"MESSAGE\"`."
+                f"Do not poll another agent's terminal. {mail_rule}"
             ),
         ]
     )
@@ -839,10 +850,30 @@ def command_note(args: argparse.Namespace) -> int:
 def command_mail(args: argparse.Namespace) -> int:
     root = project_root(args.project)
     agents = load_config(root)["agents"]
+    lead_name = next(name for name, data in agents.items() if data.get("current"))
     if args.sender not in agents and args.sender != "watchdog":
         raise FactoryError(f"unknown mail sender: {args.sender}")
     if args.recipient not in agents:
         raise FactoryError(f"unknown mail recipient: {args.recipient}")
+    registry, _ = with_registry(root)
+    if registry.get("active"):
+        surface_id = os.environ.get("CMUX_SURFACE_ID")
+        actual_sender = agent_for_surface(registry, surface_id)
+        watchdog = registry.get("watchdog")
+        if (
+            actual_sender is None
+            and isinstance(watchdog, dict)
+            and watchdog.get("surface_id") == surface_id
+        ):
+            actual_sender = "watchdog"
+        if actual_sender is None:
+            raise FactoryError("cannot verify the mail sender from this cmux surface")
+        if actual_sender != args.sender:
+            raise FactoryError(f"mail sender is {actual_sender}, not {args.sender}")
+    if args.sender == args.recipient:
+        raise FactoryError("agents cannot send mail to themselves")
+    if args.sender != lead_name and args.recipient != lead_name:
+        raise FactoryError(f"{args.sender} can send mail only to the Lead ({lead_name})")
     path = write_mail(root, args.sender, args.recipient, args.kind, args.message)
     action = ping_recipient(root, args.recipient, urgent=args.urgent)
     print(f"MAIL  {path.relative_to(root)}; {action}")

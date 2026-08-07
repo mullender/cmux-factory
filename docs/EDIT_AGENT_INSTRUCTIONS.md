@@ -85,8 +85,51 @@ Watchdog -> cmux events or targeted screen checks -> recipient inbox
 Lead     -> .factory/inbox/lead/ only
 ```
 
+Mail routes through the Lead. Non-Lead agents can send mail only to the Lead,
+and only the Lead can send mail to non-Lead agents. `factory mail` enforces the
+same rule, so a prompt change cannot bypass it.
+
 Inbox files are local runtime data. Git ignores `.factory/inbox/`. Move facts
 that must survive the session into `.factory/brain/`.
+
+## Keep Reviewer findings in scope
+
+The Reviewer reports two separate groups:
+
+1. Findings caused or made worse by the current change. These findings can
+   block the change.
+2. Pre-existing or adjacent issues. These findings go to the Lead for separate
+   triage and do not block the change.
+
+For example, a change can improve log display while the Reviewer finds a
+pre-existing buffer overflow in the logging system. The Reviewer must report
+the overflow as an urgent follow-up. The overflow does not block the display
+change unless that change introduces or materially worsens the overflow.
+
+Edit `.factory/roles/reviewer.md` to change this policy. Keep the two report
+sections in `.factory/agents/reviewer/HANDOFF.md` so that the Lead can see the
+scope boundary.
+
+## Protect open pull requests in other repositories
+
+Before a GitHub push, the Lead and Builder must check whether the exact remote
+branch is the head of an open cross-repository pull request. This commonly
+happens when a branch in a fork has an open pull request in an upstream
+repository. A push to the fork would also update the upstream pull request.
+
+Search by branch, then verify each candidate's head repository and
+`isCrossRepository` value:
+
+```sh
+branch=$(git branch --show-current)
+gh search prs --head "$branch" --state open \
+  --json repository,number,url
+```
+
+Do not block on a branch-name match alone. Branch names can be the same in
+unrelated repositories. Block only when the open pull request uses the exact
+remote repository and branch as its head. Show the pull request URL and wait
+for explicit user approval before a push.
 
 ## Edit the defaults for future projects
 
