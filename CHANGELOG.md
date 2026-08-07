@@ -10,6 +10,7 @@ This file records user-visible changes to cmux-factory.
 - Report pre-existing and adjacent issues as separate follow-up opportunities for Lead triage.
 - Give Reviewer handoffs separate sections for the current verdict and later work.
 - Route all agent mail through the Lead and verify the sender against its registered cmux surface.
+- Stop Lead and Builder pushes that would update an open cross-repository pull request without explicit approval.
 
 ## [0.2.0.0] - 2026-08-07
 
