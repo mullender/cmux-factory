@@ -8,32 +8,38 @@ All agents read and write plain files under `.factory/`.
 
 ## Proof-of-concept scope
 
-The first proof of concept does five things:
+The proof of concept does six things:
 
 1. It uses the current cmux tab as the Lead.
 2. It creates Builder, Reviewer, and Watchdog tabs in the same pane.
 3. It launches each configured agent with its role prompt.
 4. It records exact cmux workspace, pane, and surface IDs.
 5. It shows a readable watchdog journal and status report.
+6. It sends agent messages through local inbox files.
 
 The watchdog reports a closed agent surface and tells the Lead. It does not
 restart the agent in this version. Recovery comes after the launch and
 observation loop works in real use.
 
-## Monitoring model
+## Monitoring and mail
 
-The watchdog listens to the structured `cmux events` stream. It does not poll
-agent screens. `read-screen` is used only as a short launch handshake when a
-new terminal queues its first command.
+The Watchdog monitors agents. It uses the structured `cmux events` stream first
+and can use a targeted `read-screen` when an event lacks enough detail. The
+Lead does not poll worker terminals.
 
-Do not ask the Lead to run `cmux read-screen` on a timer. That adds console
-noise, can require repeated approval, and depends on terminal text that can
-change.
+Agents exchange files under `.factory/inbox/<recipient>/`. The Lead checks only
+`.factory/inbox/lead/` at turn boundaries. An urgent Watchdog message can send
+one short ping to an idle Lead. If the Lead is working, cmux shows a
+notification and does not type into the active prompt.
 
-The next small extension is a local mailbox under `.factory/run/mail/`. The
-watchdog can write full event details there and send the Lead one short notice.
-Git ignores the runtime mailbox because a permission event can contain command
-text. Durable facts and lessons stay under `.factory/brain/`.
+Git ignores the inbox because a permission event can contain command text.
+Durable facts and lessons stay under `.factory/brain/`.
+
+```sh
+factory mail builder lead "The change is ready for review" --kind handoff
+factory inbox lead
+factory inbox lead --archive
+```
 
 ## Install
 
@@ -102,6 +108,8 @@ Useful commands:
 factory status
 factory events --follow
 factory check-in builder working "Investigating the parser"
+factory mail builder lead "The parser is ready" --kind handoff
+factory inbox lead --archive
 factory note "Builder proposed a service when one function was enough"
 factory stop
 ```

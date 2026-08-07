@@ -75,6 +75,19 @@ git push
 This review is manual in the POC. The factory records evidence, but it does not
 rewrite its own instructions.
 
+## Change inbox behavior
+
+Shared rules tell agents to check only their own inbox at turn boundaries. The
+Watchdog owns terminal monitoring. Keep that boundary when you edit prompts:
+
+```text
+Watchdog -> cmux events or targeted screen checks -> recipient inbox
+Lead     -> .factory/inbox/lead/ only
+```
+
+Inbox files are local runtime data. Git ignores `.factory/inbox/`. Move facts
+that must survive the session into `.factory/brain/`.
+
 ## Edit the defaults for future projects
 
 Change to the cmux-factory clone:

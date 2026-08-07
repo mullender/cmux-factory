@@ -54,6 +54,14 @@ The pull does not change `.factory` directories in existing projects. Each
 project owns those files. Apply a template change by following
 [Edit agent instructions](EDIT_AGENT_INSTRUCTIONS.md#apply-a-default-change-to-an-existing-project).
 
+Projects created before version 0.2.0.0 need one local inbox ignore rule:
+
+```sh
+grep -qxF 'inbox/' .factory/.gitignore || \
+  printf '%s\n' 'inbox/' >> .factory/.gitignore
+factory doctor --project
+```
+
 ## Pull changes to a project brain
 
 If project instructions changed in the project repository, update that project
