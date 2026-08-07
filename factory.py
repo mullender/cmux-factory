@@ -23,7 +23,7 @@ from typing import Any, Callable
 
 SOURCE_ROOT = Path(__file__).resolve().parent
 TEMPLATE_ROOT = SOURCE_ROOT / "templates" / "project" / ".factory"
-VERSION = "0.2.1.0"
+VERSION = "0.3.0.0"
 TEMPLATE_STATE_FORMAT = 1
 MANAGED_TEMPLATE_PATTERNS = (
     "config/*.md",
