@@ -9,6 +9,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import subprocess
@@ -124,6 +125,9 @@ def load_config(root: Path) -> dict[str, Any]:
     agents = config.get("agents")
     if not isinstance(agents, dict) or not agents:
         raise FactoryError("factory.toml must define at least one agent")
+    for name in agents:
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name):
+            raise FactoryError(f"invalid agent name: {name!r}")
     current = [name for name, data in agents.items() if isinstance(data, dict) and data.get("current") is True]
     if len(current) != 1:
         raise FactoryError("factory.toml must define exactly one current agent")
@@ -234,6 +238,22 @@ def atomic_json(path: Path, value: Any) -> None:
             pass
 
 
+def atomic_text(path: Path, value: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w") as stream:
+            stream.write(value)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+
 def append_jsonl(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as stream:
@@ -271,6 +291,13 @@ def compose_prompt(root: Path, name: str, agent: dict[str, Any]) -> str:
                 f"Run `factory check-in {name} working \"SHORT SUMMARY\"` when work starts. "
                 f"Run `factory check-in {name} idle \"SHORT SUMMARY\"` when a turn ends. "
                 f"Keep durable notes under `.factory/agents/{name}/`."
+            ),
+            (
+                "# Inbox\n\n"
+                f"Run `factory inbox {name}` at the start and end of each turn. "
+                f"After you process all shown messages, run `factory inbox {name} --archive`. "
+                "Do not poll another agent's terminal. Send a message with "
+                f"`factory mail {name} RECIPIENT \"MESSAGE\"`."
             ),
         ]
     )
@@ -416,7 +443,7 @@ def command_doctor(args: argparse.Namespace) -> int:
 
     def check_ignore() -> str:
         text = ignore.read_text()
-        required = {"run/", "agents/*/STATUS.json"}
+        required = {"run/", "inbox/", "agents/*/STATUS.json"}
         missing = sorted(item for item in required if item not in text.splitlines())
         if missing:
             raise FactoryError(f"missing entries: {', '.join(missing)}")
@@ -457,7 +484,7 @@ def command_start(args: argparse.Namespace) -> int:
         "generation": 1,
         "label": current_label,
         "surface_id": lead_surface_id,
-        "state": "ready",
+        "state": "working",
         "reason": "current session registered as Lead",
         "current": True,
         "updated_at": utc_now(),
@@ -619,6 +646,60 @@ def agent_for_surface(registry: dict[str, Any], surface_id: str | None) -> str |
     return None
 
 
+def inbox_dir(root: Path, recipient: str) -> Path:
+    return root / ".factory" / "inbox" / recipient
+
+
+def unread_mail(root: Path, recipient: str) -> list[Path]:
+    directory = inbox_dir(root, recipient)
+    if not directory.is_dir():
+        return []
+    return sorted(path for path in directory.glob("*.md") if path.is_file())
+
+
+def write_mail(root: Path, sender: str, recipient: str, kind: str, message: str) -> Path:
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    path = inbox_dir(root, recipient) / f"{stamp}.{sender}.md"
+    content = (
+        f"---\nfrom: {sender}\nto: {recipient}\nat: {utc_now()}\nkind: {kind}\n---\n\n"
+        f"{message.strip()}\n"
+    )
+    atomic_text(path, content)
+    return path
+
+
+def ping_recipient(root: Path, recipient: str, *, urgent: bool) -> str:
+    registry, _ = with_registry(root)
+    if not registry.get("active"):
+        return "stored"
+    agent = registry.get("agents", {}).get(recipient)
+    workspace_id = registry.get("workspace_id")
+    if not isinstance(agent, dict) or not isinstance(workspace_id, str):
+        return "stored"
+    surface_id = agent.get("surface_id")
+    if not isinstance(surface_id, str):
+        return "stored"
+
+    if urgent and agent.get("state") in {"ready", "idle"}:
+        send_turn(
+            workspace_id,
+            surface_id,
+            f"Factory inbox: urgent mail for {recipient}. Run `factory inbox {recipient} --archive`.",
+        )
+        return "agent pinged"
+
+    if urgent:
+        cmux(
+            "notify",
+            "--title", f"cmux-factory mail for {recipient}",
+            "--body", f"Urgent factory mail is waiting in .factory/inbox/{recipient}/",
+            "--workspace", workspace_id,
+            "--surface", surface_id,
+        )
+        return "user notified"
+    return "stored"
+
+
 def handle_watch_event(root: Path, event: dict[str, Any]) -> None:
     registry, _ = with_registry(root)
     if event.get("workspace_id") != registry.get("workspace_id"):
@@ -633,24 +714,32 @@ def handle_watch_event(root: Path, event: dict[str, Any]) -> None:
         set_agent_state(root, name, "needs-attention", reason)
         journal(root, "DECIDE", "mark needs-attention; automatic restart is disabled", agent=name)
         lead_name = registry.get("lead")
-        lead = registry.get("agents", {}).get(lead_name, {})
-        if isinstance(lead, dict) and isinstance(lead.get("surface_id"), str):
+        if isinstance(lead_name, str):
+            generation = registry.get("agents", {}).get(name, {}).get("generation", "?")
             message = (
-                f"Factory watchdog: {name} generation 1 closed. Automatic restart is disabled in "
+                f"Agent `{name}` generation {generation} closed. Automatic restart is disabled in "
                 "the proof of concept. Preserve its handoff and tell the user."
             )
-            send_turn(registry["workspace_id"], lead["surface_id"], message)
-            journal(root, "ACT", "told Lead that the agent surface closed", agent=name)
-        cmux(
-            "notify",
-            "--title", "cmux-factory needs attention",
-            "--body", f"{name} surface closed; automatic restart is disabled",
-            "--workspace", registry["workspace_id"],
-        )
-        journal(root, "RESULT", "Lead and user notified", agent=name)
+            mail = write_mail(root, "watchdog", lead_name, "surface-closed", message)
+            action = ping_recipient(root, lead_name, urgent=True)
+            journal(root, "ACT", f"wrote {mail.relative_to(root)}; {action}", agent=name)
+        journal(root, "RESULT", "Lead inbox contains the failure details", agent=name)
     elif event_name.startswith("agent.hook."):
         hook = event_name.removeprefix("agent.hook.")
-        if hook == "Stop":
+        if hook == "PermissionRequest":
+            set_agent_state(root, name, "blocked", "agent permission request")
+            lead_name = registry.get("lead")
+            if isinstance(lead_name, str):
+                payload = json.dumps(event.get("payload", {}), indent=2, sort_keys=True)
+                message = (
+                    f"Agent `{name}` is waiting for permission on surface `{event.get('surface_id', '?')}`.\n\n"
+                    f"Event `{event.get('id', '?')}` details:\n\n```json\n{payload}\n```"
+                )
+                mail = write_mail(root, "watchdog", lead_name, "permission", message)
+                action = ping_recipient(root, lead_name, urgent=True)
+                journal(root, "ACT", f"wrote {mail.relative_to(root)}; {action}", agent=name)
+            journal(root, "RESULT", "Lead inbox contains the permission request", agent=name)
+        elif hook == "Stop":
             set_agent_state(root, name, "idle", "agent Stop hook")
         elif hook in {"UserPromptSubmit", "PreToolUse"}:
             set_agent_state(root, name, "working", f"agent {hook} hook")
@@ -747,6 +836,42 @@ def command_note(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_mail(args: argparse.Namespace) -> int:
+    root = project_root(args.project)
+    agents = load_config(root)["agents"]
+    if args.sender not in agents and args.sender != "watchdog":
+        raise FactoryError(f"unknown mail sender: {args.sender}")
+    if args.recipient not in agents:
+        raise FactoryError(f"unknown mail recipient: {args.recipient}")
+    path = write_mail(root, args.sender, args.recipient, args.kind, args.message)
+    action = ping_recipient(root, args.recipient, urgent=args.urgent)
+    print(f"MAIL  {path.relative_to(root)}; {action}")
+    return 0
+
+
+def command_inbox(args: argparse.Namespace) -> int:
+    root = project_root(args.project)
+    agents = load_config(root)["agents"]
+    if args.agent not in agents:
+        raise FactoryError(f"unknown inbox agent: {args.agent}")
+    messages = unread_mail(root, args.agent)
+    print(f"INBOX {args.agent} unread={len(messages)}")
+    if not messages:
+        return 0
+
+    archive = root / ".factory" / "inbox" / "archive" / args.agent
+    if args.archive:
+        archive.mkdir(parents=True, exist_ok=True)
+    for path in messages:
+        print(f"--- {path.name} ---")
+        print(path.read_text().rstrip())
+        if args.archive:
+            path.replace(archive / path.name)
+    if args.archive:
+        print(f"ARCHIVE {len(messages)} message(s) -> {archive.relative_to(root)}")
+    return 0
+
+
 def command_stop(args: argparse.Namespace) -> int:
     root = project_root(args.project)
     registry, _ = with_registry(root)
@@ -832,6 +957,21 @@ def parser() -> argparse.ArgumentParser:
     add_project_option(note)
     note.add_argument("text")
     note.set_defaults(handler=command_note)
+
+    mail = subparsers.add_parser("mail", help="write a message to an agent inbox")
+    add_project_option(mail)
+    mail.add_argument("sender")
+    mail.add_argument("recipient")
+    mail.add_argument("message")
+    mail.add_argument("--kind", choices=["message", "blocked", "permission", "handoff"], default="message")
+    mail.add_argument("--urgent", action="store_true", help="ping an idle recipient or notify the user")
+    mail.set_defaults(handler=command_mail)
+
+    inbox = subparsers.add_parser("inbox", help="read one agent inbox")
+    add_project_option(inbox)
+    inbox.add_argument("agent")
+    inbox.add_argument("--archive", action="store_true", help="archive all messages after printing them")
+    inbox.set_defaults(handler=command_inbox)
 
     stop = subparsers.add_parser("stop", help="interrupt workers and watchdog")
     add_project_option(stop)
