@@ -29,6 +29,8 @@ The factory manages these template files:
 ```
 
 It does not update project state, handoffs, brain files, or `factory.toml`.
+It does not remove an old managed file when the central template removes it.
+Review and remove obsolete files by hand.
 Project-specific provider commands and agent names stay unchanged.
 
 The factory records template hashes in `.factory/template-state.json`. Commit
