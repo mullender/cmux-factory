@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Task-based tutorials for cmux-factory.">
+  <title>cmux-factory task guide</title>
+  <link rel="stylesheet" href="assets/site.css">
+  <script src="assets/site.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to the tasks</a>
+
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="#top" aria-label="cmux-factory home">
+        <span class="brand-mark" aria-hidden="true">cf</span>
+        <span>cmux-factory</span>
+      </a>
+      <nav aria-label="Main navigation">
+        <a href="#tasks">Tasks</a>
+        <a href="#reference">Commands</a>
+        <a href="https://github.com/mullender/cmux-factory">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top">
+      <div>
+        <p class="eyebrow">Small, local, inspectable</p>
+        <h1>What do you want to do?</h1>
+        <p class="lede">Pick a task and copy the commands. The current agent becomes the Lead. cmux opens the Builder, Reviewer, and Watchdog tabs.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="#tasks">Choose a task</a>
+          <a class="button secondary" href="#first-run">Run the first tutorial</a>
+        </div>
+      </div>
+      <aside class="factory-map" aria-label="Factory tab layout">
+        <p class="map-label">One cmux workspace</p>
+        <div class="map-row lead-row"><i></i><strong>Lead</strong><span>You work here</span></div>
+        <div class="map-row"><i></i><strong>Builder</strong><span>Changes code</span></div>
+        <div class="map-row"><i></i><strong>Reviewer</strong><span>Checks evidence</span></div>
+        <div class="map-row watch"><i></i><strong>Watchdog</strong><span>Reports failures</span></div>
+      </aside>
+    </section>
+
+    <section class="path-panel" aria-labelledby="path-title">
+      <div>
+        <p class="eyebrow">Make commands ready to copy</p>
+        <h2 id="path-title">Set your project path</h2>
+        <p>The page uses this path and its directory name in every project command.</p>
+      </div>
+      <div>
+        <label for="project-path">Absolute project path</label>
+        <div class="path-control">
+          <input id="project-path" type="text" value="/path/to/project" spellcheck="false" autocomplete="off">
+          <button id="reset-path" type="button">Reset</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="task-picker" id="tasks" aria-labelledby="tasks-title">
+      <div class="section-heading split-heading">
+        <div><p class="eyebrow">Task index</p><h2 id="tasks-title">I want to…</h2></div>
+        <label class="filter-control" for="task-filter">
+          <span>Filter tasks</span>
+          <input id="task-filter" type="search" placeholder="Try “update” or “Claude”">
+        </label>
+      </div>
+      <div class="task-grid">
+        <a class="task-card" href="#install" data-task="install fresh new machine setup"><b>01</b><span><strong>Install on a fresh machine</strong><small>Clone, link, and verify</small></span></a>
+        <a class="task-card" href="#first-run" data-task="first run add init project"><b>02</b><span><strong>Add the factory to a project</strong><small>Create the project brain</small></span></a>
+        <a class="task-card" href="#start-codex" data-task="start launch codex lead workspace"><b>03</b><span><strong>Start with Codex as Lead</strong><small>Open the full workspace</small></span></a>
+        <a class="task-card" href="#start-claude" data-task="start launch claude lead workspace"><b>04</b><span><strong>Start with Claude as Lead</strong><small>Use the same factory roles</small></span></a>
+        <a class="task-card" href="#observe" data-task="status inspect watchdog events health"><b>05</b><span><strong>Check what the factory is doing</strong><small>Status and watchdog events</small></span></a>
+        <a class="task-card" href="#edit-project" data-task="edit project instructions rules style roles"><b>06</b><span><strong>Change instructions for one project</strong><small>Rules, style, and roles</small></span></a>
+        <a class="task-card" href="#edit-defaults" data-task="edit default template future projects"><b>07</b><span><strong>Change defaults for future projects</strong><small>Edit the central templates</small></span></a>
+        <a class="task-card" href="#providers" data-task="change agent provider command muse codex claude"><b>08</b><span><strong>Change an agent provider</strong><small>Keep it provider-neutral</small></span></a>
+        <a class="task-card" href="#update" data-task="pull update latest git skill templates"><b>09</b><span><strong>Pull the latest updates</strong><small>Fast-forward and verify</small></span></a>
+        <a class="task-card" href="#session-review" data-task="review session learn feedback lessons improve instructions"><b>10</b><span><strong>Learn from a factory session</strong><small>Turn repeated feedback into rules</small></span></a>
+        <a class="task-card" href="#stop" data-task="stop end shutdown session"><b>11</b><span><strong>Stop a factory session</strong><small>Interrupt workers safely</small></span></a>
+      </div>
+      <p id="no-results" class="no-results" hidden>No task matches that filter.</p>
+    </section>
+
+    <section class="tutorial" id="install">
+      <header><p class="task-kicker">I want to set up a new machine</p><h2>Install cmux-factory</h2><p>Result: the command and agent skill point to one local clone.</p></header>
+      <ol class="steps">
+        <li><div><h3>Check the prerequisites</h3><p>Install cmux, Git, Python 3.11 or later, and at least one agent command.</p><div class="command"><pre><code>cmux version
+git --version
+python3 --version
+command -v codex
+command -v claude</code></pre></div></div></li>
+        <li><div><h3>Clone and install</h3><div class="command"><pre><code>git clone https://github.com/mullender/cmux-factory.git \
+  ~/.local/share/cmux-factory
+cd ~/.local/share/cmux-factory
+./install</code></pre></div></div></li>
+        <li><div><h3>Add the command to your shell</h3><div class="command"><pre><code>grep -qxF 'export PATH="$HOME/.local/bin:$PATH"' ~/.zshrc || \
+  printf '%s\n' 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.zshrc
+source ~/.zshrc</code></pre></div></div></li>
+        <li><div><h3>Connect cmux and verify</h3><div class="command"><pre><code>cmux hooks setup
+factory version
+factory doctor</code></pre></div><p class="success">Done when the cmux binary and socket checks report PASS.</p></div></li>
+      </ol>
+    </section>
+
+    <section class="tutorial" id="first-run">
+      <header><p class="task-kicker">I want to add the factory to a project</p><h2>Create the project brain</h2><p>Result: the Git root contains a readable <code>.factory</code> directory.</p></header>
+      <ol class="steps">
+        <li><div><h3>Initialize from any project directory</h3><div class="command"><pre><code>cd <span data-project-path>/path/to/project</span>
+factory init</code></pre></div><p>A second run changes nothing and prints READY.</p></div></li>
+        <li><div><h3>Check the project</h3><div class="command"><pre><code>factory doctor --project</code></pre></div><p class="success">Done when cmux, the project config, worker commands, and ignore rules pass.</p></div></li>
+      </ol>
+      <aside class="callout"><strong>Safe by default.</strong> If <code>.factory</code> is unknown or invalid, initialization stops. It does not replace the files.</aside>
+    </section>
+
+    <section class="tutorial" id="start-codex">
+      <header><p class="task-kicker">I want Codex to be the Lead</p><h2>Start with Codex</h2><p>Choose the command for your current location.</p></header>
+      <div class="choice-grid">
+        <article><p class="choice-label">From a normal terminal</p><h3>Open cmux, then start Codex</h3><div class="command"><pre><code>cmux <span data-project-path>/path/to/project</span></code></pre></div><p>In the new cmux terminal:</p><div class="command"><pre><code>codex /start-factory</code></pre></div></article>
+        <article class="recommended"><p class="choice-label">From an existing cmux terminal</p><h3>Create and start in one command</h3><div class="command"><pre><code>cmux new-workspace --name <span data-project-name>project</span> \
+  --cwd <span data-project-path>/path/to/project</span> \
+  --command 'codex /start-factory' --focus true</code></pre></div></article>
+      </div>
+    </section>
+
+    <section class="tutorial" id="start-claude">
+      <header><p class="task-kicker">I want Claude to be the Lead</p><h2>Start with Claude</h2><p>The worker roles still come from <code>.factory/factory.toml</code>.</p></header>
+      <div class="choice-grid">
+        <article><p class="choice-label">From a normal terminal</p><h3>Open cmux, then start Claude</h3><div class="command"><pre><code>cmux <span data-project-path>/path/to/project</span></code></pre></div><p>In the new cmux terminal:</p><div class="command"><pre><code>claude /start-factory</code></pre></div></article>
+        <article class="recommended"><p class="choice-label">From an existing cmux terminal</p><h3>Create and start in one command</h3><div class="command"><pre><code>cmux new-workspace --name <span data-project-name>project</span> \
+  --cwd <span data-project-path>/path/to/project</span> \
+  --command 'claude /start-factory' --focus true</code></pre></div></article>
+      </div>
+      <details><summary>If <code>/start-factory</code> is not available</summary><p>Give the Lead this prompt:</p><div class="command"><pre><code>Run factory doctor --project, then run factory start. You are the Lead.</code></pre></div></details>
+    </section>
+
+    <section class="tutorial" id="observe">
+      <header><p class="task-kicker">I want to see what the factory is doing</p><h2>Inspect status and watchdog events</h2><p>The output uses exact cmux IDs and readable reasons.</p></header>
+      <div class="command-grid">
+        <article><h3>Read status</h3><div class="command"><pre><code>factory status</code></pre></div></article>
+        <article><h3>Follow watchdog actions</h3><div class="command"><pre><code>factory events --follow</code></pre></div></article>
+        <article><h3>Get JSON status</h3><div class="command"><pre><code>factory status --json</code></pre></div></article>
+        <article><h3>Record feedback</h3><div class="command"><pre><code>factory note "Keep the next change smaller"</code></pre></div></article>
+      </div>
+      <aside class="callout"><strong>Event-based monitoring.</strong> The watchdog listens to structured cmux events. It does not poll agent screens. Use <code>read-screen</code> only for a specific diagnosis.</aside>
+      <aside class="callout warning"><strong>POC limit.</strong> The watchdog reports a closed agent. It does not restart the agent.</aside>
+    </section>
+
+    <section class="tutorial" id="edit-project">
+      <header><p class="task-kicker">I want to change instructions for one project</p><h2>Edit project-owned rules</h2><p>These changes travel with the project repository.</p></header>
+      <div class="file-table" tabindex="0">
+        <table>
+          <thead><tr><th>File</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td><code>.factory/config/OPERATING_RULES.md</code></td><td>Rules for all agents</td></tr>
+            <tr><td><code>.factory/config/STYLE.md</code></td><td>Shared writing style</td></tr>
+            <tr><td><code>.factory/roles/lead.md</code></td><td>Lead duties and limits</td></tr>
+            <tr><td><code>.factory/roles/builder.md</code></td><td>Builder duties and limits</td></tr>
+            <tr><td><code>.factory/roles/reviewer.md</code></td><td>Reviewer duties and limits</td></tr>
+            <tr><td><code>.factory/agents/&lt;name&gt;/IDENTITY.md</code></td><td>One agent identity</td></tr>
+            <tr><td><code>.factory/factory.toml</code></td><td>Names, commands, and role paths</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <ol class="steps compact">
+        <li><div><h3>Edit a rule</h3><div class="command"><pre><code>cd <span data-project-path>/path/to/project</span>
+$EDITOR .factory/config/OPERATING_RULES.md</code></pre></div></div></li>
+        <li><div><h3>Review and publish it</h3><div class="command"><pre><code>git diff -- .factory/config/OPERATING_RULES.md
+git add .factory/config/OPERATING_RULES.md
+git commit -m "docs: update factory operating rules"
+git push</code></pre></div></div></li>
+        <li><div><h3>Restart the factory</h3><p>Existing agents keep their original prompt. Start a new session to load the change.</p></div></li>
+      </ol>
+    </section>
+
+    <section class="tutorial" id="edit-defaults">
+      <header><p class="task-kicker">I want to change defaults for future projects</p><h2>Edit central templates</h2><p>New projects receive these files when <code>factory init</code> creates their brain.</p></header>
+      <ol class="steps compact">
+        <li><div><h3>Open a template</h3><div class="command"><pre><code>cd ~/.local/share/cmux-factory
+$EDITOR templates/project/.factory/config/STYLE.md</code></pre></div></div></li>
+        <li><div><h3>Test and publish it</h3><div class="command"><pre><code>python3 -m unittest discover -s tests -v
+git diff
+git add templates/project/.factory
+git commit -m "docs: update default agent instructions"
+git push</code></pre></div></div></li>
+        <li><div><h3>Compare with one existing project</h3><div class="command"><pre><code>cd <span data-project-path>/path/to/project</span>
+diff -u \
+  ~/.local/share/cmux-factory/templates/project/.factory/config/STYLE.md \
+  .factory/config/STYLE.md</code></pre></div></div></li>
+      </ol>
+      <aside class="callout"><strong>No hidden merge.</strong> <code>factory init</code> does not replace existing instructions. Apply useful changes by hand.</aside>
+    </section>
+
+    <section class="tutorial" id="providers">
+      <header><p class="task-kicker">I want to use a different agent command</p><h2>Change a worker provider</h2><p>cmux-factory calls commands. It does not depend on a provider SDK.</p></header>
+      <ol class="steps compact">
+        <li><div><h3>Edit the project config</h3><div class="command"><pre><code>cd <span data-project-path>/path/to/project</span>
+$EDITOR .factory/factory.toml</code></pre></div></div></li>
+        <li><div><h3>Keep <code>{prompt}</code> as a separate argument</h3><div class="command"><pre><code>[agents.builder]
+label = "Builder"
+command = ["claude", "{prompt}"]
+role = ".factory/roles/builder.md"</code></pre></div></div></li>
+        <li><div><h3>Check the command</h3><div class="command"><pre><code>factory doctor --project</code></pre></div></div></li>
+      </ol>
+    </section>
+
+    <section class="tutorial" id="update">
+      <header><p class="task-kicker">I want the latest factory version</p><h2>Pull updates safely</h2><p>The installed command and skills are links into the clone.</p></header>
+      <ol class="steps">
+        <li><div><h3>Check local work</h3><div class="command"><pre><code>cd ~/.local/share/cmux-factory
+git status --short</code></pre></div><p>Commit or move local changes before you pull.</p></div></li>
+        <li><div><h3>Pull and verify links</h3><div class="command"><pre><code>git pull --ff-only
+./install
+cmux hooks setup</code></pre></div></div></li>
+        <li><div><h3>Verify the update</h3><div class="command"><pre><code>factory version
+factory doctor</code></pre></div><p class="success">Start a new Lead so it loads the updated skill.</p></div></li>
+      </ol>
+      <aside class="callout"><strong>Project brains stay stable.</strong> A pull does not rewrite existing <code>.factory</code> directories.</aside>
+    </section>
+
+    <section class="tutorial" id="session-review">
+      <header><p class="task-kicker">I want the factory to learn from a session</p><h2>Review feedback and improve the rules</h2><p>The POC keeps this process manual and visible.</p></header>
+      <ol class="steps compact">
+        <li><div><h3>Record feedback during the session</h3><div class="command"><pre><code>factory note "Keep each assignment small"
+factory note "Require evidence before reporting completion"</code></pre></div></div></li>
+        <li><div><h3>Review feedback at the end</h3><div class="command"><pre><code>tail -n 50 .factory/brain/FEEDBACK.jsonl
+$EDITOR .factory/brain/LESSONS.md</code></pre></div></div></li>
+        <li><div><h3>Move repeated lessons into the right rules</h3><div class="command"><pre><code>$EDITOR .factory/config/OPERATING_RULES.md
+$EDITOR .factory/config/STYLE.md
+git diff -- .factory</code></pre></div><p>Keep one-time facts in the brain. Add only repeated and useful behavior to agent instructions.</p></div></li>
+        <li><div><h3>Commit the lesson</h3><div class="command"><pre><code>git add .factory
+git commit -m "docs: apply factory session lessons"
+git push</code></pre></div></div></li>
+      </ol>
+      <aside class="callout"><strong>No automatic self-edit.</strong> The factory records evidence. You choose which lessons become instructions.</aside>
+    </section>
+
+    <section class="tutorial" id="stop">
+      <header><p class="task-kicker">I want to end the current session</p><h2>Stop the factory</h2><p>The command interrupts workers and the watchdog. It leaves tabs open for inspection.</p></header>
+      <div class="command"><pre><code>cd <span data-project-path>/path/to/project</span>
+factory stop</code></pre></div>
+      <p>Close the worker and watchdog tabs when you no longer need their output.</p>
+    </section>
+
+    <section class="reference" id="reference">
+      <header class="section-heading"><p class="eyebrow">Quick reference</p><h2>Factory commands</h2></header>
+      <div class="reference-grid">
+        <div><code>factory init [DIR]</code><span>Create or verify a project brain</span></div>
+        <div><code>factory doctor --project</code><span>Check cmux, config, and agents</span></div>
+        <div><code>factory start</code><span>Launch tabs from the Lead</span></div>
+        <div><code>factory status [--json]</code><span>Show agents and surface health</span></div>
+        <div><code>factory events [--follow]</code><span>Read watchdog decisions</span></div>
+        <div><code>factory check-in …</code><span>Record agent state</span></div>
+        <div><code>factory note TEXT</code><span>Record process feedback</span></div>
+        <div><code>factory stop</code><span>Interrupt workers and watchdog</span></div>
+        <div><code>factory version</code><span>Show source and revision</span></div>
+        <div><code>factory watch</code><span>Run the watchdog loop</span></div>
+      </div>
+      <details class="troubleshooting">
+        <summary>Troubleshooting checks</summary>
+        <div class="command-grid">
+          <article><h3>Command not found</h3><div class="command"><pre><code>ls -l ~/.local/bin/factory
+printf '%s\n' "$PATH"</code></pre></div></article>
+          <article><h3>Project or agent failure</h3><div class="command"><pre><code>factory doctor --project</code></pre></div></article>
+          <article><h3>Pull cannot fast-forward</h3><div class="command"><pre><code>git status
+git log --oneline --decorate --graph --all -20</code></pre></div></article>
+          <article><h3>Old instructions remain</h3><p>Stop the old session. Start a new Lead and workers.</p></article>
+        </div>
+      </details>
+    </section>
+  </main>
+
+  <footer>
+    <div><strong>cmux-factory</strong><p>A small harness for named coding agents and a shared project brain.</p></div>
+    <div class="footer-links">
+      <a href="https://github.com/mullender/cmux-factory">Source</a>
+      <a href="https://github.com/mullender/cmux-factory/tree/main/docs">Markdown guides</a>
+      <a href="#top">Back to top</a>
+    </div>
+  </footer>
+  <div id="copy-status" class="copy-status" role="status" aria-live="polite"></div>
+</body>
+</html>
