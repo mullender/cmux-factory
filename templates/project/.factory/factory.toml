@@ -1,0 +1,17 @@
+version = 1
+name = "project-name"
+
+[agents.lead]
+label = "Lead"
+current = true
+role = ".factory/roles/lead.md"
+
+[agents.builder]
+label = "Builder"
+command = ["claude", "{prompt}"]
+role = ".factory/roles/builder.md"
+
+[agents.reviewer]
+label = "Reviewer"
+command = ["codex", "{prompt}"]
+role = ".factory/roles/reviewer.md"

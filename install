@@ -1,0 +1,34 @@
+#!/bin/sh
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+bin_dir=${FACTORY_BIN_DIR:-${HOME}/.local/bin}
+codex_skills_dir=${FACTORY_CODEX_SKILLS_DIR:-${CODEX_HOME:-${HOME}/.codex}/skills}
+claude_skills_dir=${FACTORY_CLAUDE_SKILLS_DIR:-${HOME}/.claude/skills}
+
+link_item() {
+  source_path=$1
+  target_path=$2
+
+  mkdir -p "$(dirname -- "$target_path")"
+
+  if [ -L "$target_path" ] && [ "$(readlink "$target_path")" = "$source_path" ]; then
+    printf 'OK    %s -> %s\n' "$target_path" "$source_path"
+    return
+  fi
+
+  if [ -e "$target_path" ] || [ -L "$target_path" ]; then
+    printf 'ERROR %s already exists\n' "$target_path" >&2
+    exit 1
+  fi
+
+  ln -s "$source_path" "$target_path"
+  printf 'LINK  %s -> %s\n' "$target_path" "$source_path"
+}
+
+link_item "$root/bin/factory" "$bin_dir/factory"
+link_item "$root/skills/start-factory" "$codex_skills_dir/start-factory"
+link_item "$root/skills/start-factory" "$claude_skills_dir/start-factory"
+
+printf '\nAdd %s to PATH if needed.\n' "$bin_dir"
+printf 'Next: cmux hooks setup && factory doctor\n'
