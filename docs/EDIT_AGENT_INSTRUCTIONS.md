@@ -88,6 +88,24 @@ Lead     -> .factory/inbox/lead/ only
 Inbox files are local runtime data. Git ignores `.factory/inbox/`. Move facts
 that must survive the session into `.factory/brain/`.
 
+## Keep Reviewer findings in scope
+
+The Reviewer reports two separate groups:
+
+1. Findings caused or made worse by the current change. These findings can
+   block the change.
+2. Pre-existing or adjacent issues. These findings go to the Lead for separate
+   triage and do not block the change.
+
+For example, a change can improve log display while the Reviewer finds a
+pre-existing buffer overflow in the logging system. The Reviewer must report
+the overflow as an urgent follow-up. The overflow does not block the display
+change unless that change introduces or materially worsens the overflow.
+
+Edit `.factory/roles/reviewer.md` to change this policy. Keep the two report
+sections in `.factory/agents/reviewer/HANDOFF.md` so that the Lead can see the
+scope boundary.
+
 ## Edit the defaults for future projects
 
 Change to the cmux-factory clone:

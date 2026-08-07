@@ -113,6 +113,18 @@ class FactoryTests(unittest.TestCase):
             self.assertIn("factory inbox builder", prompt)
             self.assertIn("Do not poll another agent's terminal", prompt)
 
+    def test_reviewer_prompt_separates_current_findings_from_follow_up_work(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.init_project(root)
+            config = factory.load_config(root)
+            prompt = factory.compose_prompt(root, "reviewer", config["agents"]["reviewer"])
+            self.assertIn("Review only the current change", prompt)
+            self.assertIn("Do not expand the goal", prompt)
+            self.assertIn("Do not use them to block the current change", prompt)
+            self.assertIn("FOLLOW-UP OPPORTUNITIES — NOT PART OF THIS CHANGE", prompt)
+            self.assertIn("does not change the current verdict", prompt)
+
     def test_cmux_parses_json_and_rejects_invalid_output(self) -> None:
         completed = subprocess.CompletedProcess(["cmux"], 0, stdout='{"ok": true}\n', stderr="")
         with (
