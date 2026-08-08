@@ -31,6 +31,7 @@ MANAGED_TEMPLATE_PATTERNS = (
     "agents/*/IDENTITY.md",
 )
 RUNTIME_IGNORE_ENTRIES = ("run/", "inbox/", "update/", "agents/*/STATUS.json")
+STOP_CMUX_TIMEOUT_SECONDS = 2.0
 
 
 class FactoryError(RuntimeError):
@@ -176,17 +177,33 @@ def cmux_bin() -> str:
     raise FactoryError("cmux is not installed or is not on PATH")
 
 
-def run_text(command: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(command, text=True, capture_output=True, check=False)
+def run_text(
+    command: list[str],
+    *,
+    check: bool = True,
+    timeout: float | None = None,
+) -> subprocess.CompletedProcess[str]:
+    try:
+        result = subprocess.run(
+            command,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise FactoryError(
+            f"command timed out after {timeout:g} seconds: {shlex.join(command)}"
+        ) from exc
     if check and result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
         raise FactoryError(f"command failed: {shlex.join(command)}: {detail}")
     return result
 
 
-def cmux(*arguments: str) -> Any:
+def cmux(*arguments: str, timeout: float | None = None) -> Any:
     command = [cmux_bin(), "--json", "--id-format", "uuids", *arguments]
-    result = run_text(command)
+    result = run_text(command, timeout=timeout)
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError as exc:
@@ -1170,7 +1187,15 @@ def command_stop(args: argparse.Namespace) -> int:
             surfaces.append(agent["surface_id"])
     for surface_id in surfaces:
         try:
-            cmux("send-key", "--workspace", workspace_id, "--surface", surface_id, "ctrl+c")
+            cmux(
+                "send-key",
+                "--workspace",
+                workspace_id,
+                "--surface",
+                surface_id,
+                "ctrl+c",
+                timeout=STOP_CMUX_TIMEOUT_SECONDS,
+            )
         except FactoryError as exc:
             print(f"WARN  could not stop surface {surface_id}: {exc}")
 

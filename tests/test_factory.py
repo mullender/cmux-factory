@@ -260,6 +260,17 @@ class FactoryTests(unittest.TestCase):
         ):
             factory.run_text(["tool", "argument"])
 
+    def test_run_text_reports_command_timeouts(self) -> None:
+        with (
+            mock.patch.object(
+                factory.subprocess,
+                "run",
+                side_effect=subprocess.TimeoutExpired(["tool", "argument"], 2),
+            ),
+            self.assertRaisesRegex(factory.FactoryError, "timed out after 2 seconds"),
+        ):
+            factory.run_text(["tool", "argument"], timeout=2)
+
     def test_update_pulls_installs_and_restarts_with_the_new_source(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -629,7 +640,11 @@ class FactoryTests(unittest.TestCase):
             self.register_factory(root)
             calls: list[tuple[str, ...]] = []
 
-            with mock.patch.object(factory, "cmux", side_effect=lambda *args: calls.append(args)):
+            with mock.patch.object(
+                factory,
+                "cmux",
+                side_effect=lambda *args, **_options: calls.append(args),
+            ):
                 code = factory.command_stop(argparse.Namespace(project=str(root)))
 
             self.assertEqual(code, 0)
@@ -638,6 +653,36 @@ class FactoryTests(unittest.TestCase):
             self.assertEqual(stopped["agents"]["builder"]["state"], "stopped")
             surfaces = {call[4] for call in calls if call[0] == "send-key"}
             self.assertEqual(surfaces, {"BUILDER", "WATCHDOG"})
+
+    def test_stop_bounds_each_cmux_call_and_continues_after_a_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.init_project(root)
+            self.register_factory(root)
+            calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
+
+            def fake_cmux(*arguments: str, **options: object):
+                calls.append((arguments, options))
+                if arguments[4] == "WATCHDOG":
+                    raise factory.FactoryError("command timed out after 2 seconds")
+                return {"queued": True}
+
+            output = io.StringIO()
+            with (
+                mock.patch.object(factory, "cmux", side_effect=fake_cmux),
+                contextlib.redirect_stdout(output),
+            ):
+                code = factory.command_stop(argparse.Namespace(project=str(root)))
+
+            self.assertEqual(code, 0)
+            stopped, _ = factory.with_registry(root)
+            self.assertFalse(stopped["active"])
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(
+                [options.get("timeout") for _, options in calls],
+                [factory.STOP_CMUX_TIMEOUT_SECONDS] * 2,
+            )
+            self.assertIn("WARN  could not stop surface WATCHDOG", output.getvalue())
 
     def test_doctor_reports_machine_and_project_checks(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
