@@ -2,6 +2,17 @@
 
 This file records user-visible changes to cmux-factory.
 
+## [0.3.1.0] - 2026-08-08
+
+### Added
+
+- Use all reviewed upstream rules with `factory update --no-pull --use-upstream`.
+- Print copyable diff, upstream, and keep-current commands when review is required.
+
+### Changed
+
+- Record clean managed-file baselines before pulling new central templates.
+
 ## [0.3.0.1] - 2026-08-08
 
 ### Fixed
