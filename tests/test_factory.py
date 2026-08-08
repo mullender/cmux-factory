@@ -112,6 +112,27 @@ class FactoryTests(unittest.TestCase):
             self.assertEqual(result["review"], [])
             self.assertIn("Local project rule", project_rule.read_text())
 
+    def test_update_can_replace_all_reviewed_rules_with_upstream(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            root.mkdir()
+            self.init_project(root)
+            project_rule = root / ".factory/roles/reviewer.md"
+            project_rule.write_text(project_rule.read_text() + "\n- Local project rule.\n")
+            template = base / "template"
+            shutil.copytree(factory.TEMPLATE_ROOT, template)
+            upstream_rule = template / "roles/reviewer.md"
+            upstream_rule.write_text(upstream_rule.read_text() + "\n- New upstream rule.\n")
+
+            result = factory.sync_project_templates(root, template, use_upstream=True)
+
+            self.assertIn("roles/reviewer.md", result["updated"])
+            self.assertEqual(result["review"], [])
+            self.assertIn("New upstream rule", project_rule.read_text())
+            self.assertNotIn("Local project rule", project_rule.read_text())
+            self.assertFalse((root / ".factory/update/roles/reviewer.md.new").exists())
+
     def test_update_does_not_guess_when_an_existing_project_has_no_template_state(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -291,6 +312,7 @@ class FactoryTests(unittest.TestCase):
                         no_pull=False,
                         source_only=False,
                         accept_current=[],
+                        use_upstream=False,
                         skip_install=False,
                     )
                 )
@@ -301,6 +323,38 @@ class FactoryTests(unittest.TestCase):
             self.assertIn("--no-pull", calls[2])
             self.assertIn("--skip-install", calls[2])
             self.assertEqual(calls[2][-2:], ["--project", str(root)])
+
+    def test_update_records_clean_template_baselines_before_pull(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.init_project(root)
+            state_path = root / ".factory/template-state.json"
+            state = json.loads(state_path.read_text())
+            state["files"].pop("roles/reviewer.md")
+            state_path.write_text(json.dumps(state))
+
+            with (
+                mock.patch.object(
+                    factory,
+                    "run_text",
+                    return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+                ),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                code = factory.command_update(
+                    argparse.Namespace(
+                        project=str(root),
+                        no_pull=False,
+                        source_only=False,
+                        accept_current=[],
+                        use_upstream=False,
+                        skip_install=False,
+                    )
+                )
+
+            recorded = json.loads(state_path.read_text())
+            self.assertEqual(code, 0)
+            self.assertIn("roles/reviewer.md", recorded["files"])
 
     def test_update_without_pull_syncs_the_project(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -328,12 +382,51 @@ class FactoryTests(unittest.TestCase):
                         no_pull=True,
                         source_only=False,
                         accept_current=[],
+                        use_upstream=False,
                         skip_install=False,
                     )
                 )
 
             self.assertEqual(code, 0)
-            sync.assert_called_once_with(root.resolve())
+            sync.assert_called_once_with(root.resolve(), use_upstream=False)
+
+    def test_update_prints_copyable_review_choices(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.init_project(root)
+            sync_result = {
+                "updated": [],
+                "current": [],
+                "local": [],
+                "review": ["roles/reviewer.md"],
+                "added": [],
+            }
+            output = io.StringIO()
+            with (
+                mock.patch.object(
+                    factory,
+                    "run_text",
+                    return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+                ),
+                mock.patch.object(factory, "sync_project_templates", return_value=sync_result),
+                contextlib.redirect_stdout(output),
+            ):
+                code = factory.command_update(
+                    argparse.Namespace(
+                        project=str(root),
+                        no_pull=True,
+                        source_only=False,
+                        accept_current=[],
+                        use_upstream=False,
+                        skip_install=False,
+                    )
+                )
+
+            receipt = output.getvalue()
+            self.assertEqual(code, 2)
+            self.assertIn("diff -u .factory/roles/reviewer.md", receipt)
+            self.assertIn("factory update --no-pull --use-upstream", receipt)
+            self.assertIn("--accept-current roles/reviewer.md", receipt)
 
     def test_start_builds_tabs_and_records_exact_ids(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

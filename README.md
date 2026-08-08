@@ -119,6 +119,7 @@ Useful commands:
 ```sh
 factory status
 factory update
+factory update --no-pull --use-upstream  # accept all reviewed upstream rules
 factory events --follow
 factory check-in builder working "Investigating the parser"
 factory mail builder lead "The parser is ready" --kind handoff

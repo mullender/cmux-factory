@@ -9,11 +9,12 @@ factory update
 
 The command performs these steps:
 
-1. Run `git pull --ff-only` in the cmux-factory clone.
-2. Run the installer again to verify command and skill links.
-3. Add required runtime ignore entries.
-4. Update managed project rules that the project did not change.
-5. Keep project-specific rules and report files that need review.
+1. Record managed files that match the installed central templates.
+2. Run `git pull --ff-only` in the cmux-factory clone.
+3. Run the installer again to verify command and skill links.
+4. Add required runtime ignore entries.
+5. Update managed project rules that the project did not change.
+6. Keep project-specific rules and report files that need review.
 
 Start a new Lead after an update. Running agents keep the prompt that they
 received when they started.
@@ -55,7 +56,9 @@ REVIEW  .factory/roles/reviewer.md
         new template: .factory/update/roles/reviewer.md.new
 ```
 
-The command exits with status 2 when review is required.
+The command exits with status 2 when review is required. It prints copyable
+commands to inspect the differences, use all upstream rules, or keep the
+current rules.
 
 ## Resolve a rule conflict
 
@@ -69,17 +72,17 @@ diff -u \
 
 Choose one resolution.
 
-To use the central template, copy it over the project file and run the update
-again without pulling:
+To use every upstream rule that needs review, run:
 
 ```sh
-cp .factory/update/roles/reviewer.md.new \
-  .factory/roles/reviewer.md
-factory update --no-pull
+factory update --no-pull --use-upstream
 ```
 
-To keep or merge the project rule, edit it and mark the latest template as
-reviewed:
+This replaces only files reported as `REVIEW`. It does not replace files
+reported as `LOCAL`.
+
+To keep or merge a current project rule, edit it and mark the latest template
+as reviewed:
 
 ```sh
 $EDITOR .factory/roles/reviewer.md
@@ -143,10 +146,13 @@ The update command does not force-push, reset, or discard local changes.
 
 ### An old project has no template state
 
-The command adopts files that exactly match the latest template. It marks
-different files as `REVIEW` because it cannot know whether they are old or
-project-specific. Resolve each reported file once. Later updates can then make
-safe decisions from the recorded baseline.
+Before it pulls, the command records files that match the installed central
+templates. These clean files update without review after the pull.
+
+If a previous update already pulled the source, an old file can still have no
+safe baseline. The command marks that file as `REVIEW` because it cannot know
+whether the file is old or project-specific. Use the printed diff commands, or
+run `factory update --no-pull --use-upstream` to use all incoming rules.
 
 ## Related guides
 
