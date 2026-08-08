@@ -2,6 +2,12 @@
 
 This file records user-visible changes to cmux-factory.
 
+## [0.3.0.1] - 2026-08-08
+
+### Fixed
+
+- Stop the factory even when a cmux terminal-control request does not return.
+
 ## [0.3.0.0] - 2026-08-07
 
 ### Added
