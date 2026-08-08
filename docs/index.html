@@ -215,13 +215,16 @@ role = ".factory/roles/builder.md"</code></pre></div></div></li>
       <ol class="steps">
         <li><div><h3>Run the update from your project</h3><div class="command"><pre><code>cd <span data-project-path>/path/to/project</span>
 factory update</code></pre></div><p>Use <code>factory update --no-pull</code> while you test local template edits.</p></div></li>
-        <li><div><h3>Review any rule conflicts</h3><div class="command"><pre><code>diff -u \
+        <li><div><h3>Resolve any rule conflicts</h3><div class="command"><pre><code>diff -u \
   .factory/roles/reviewer.md \
-  .factory/update/roles/reviewer.md.new</code></pre></div><p>The project file stays unchanged when both copies changed.</p></div></li>
+  .factory/update/roles/reviewer.md.new
+
+# Accept all incoming rules:
+factory update --no-pull --use-upstream</code></pre></div><p>The command prints exact diff, upstream, and keep-current choices. The project file stays unchanged until you choose.</p></div></li>
         <li><div><h3>Verify the update</h3><div class="command"><pre><code>factory version
 factory doctor</code></pre></div><p class="success">Start a new Lead so it loads the updated skill.</p></div></li>
       </ol>
-      <aside class="callout"><strong>Project changes stay safe.</strong> Unchanged rules update automatically. Project-specific rules stay unchanged. A <code>REVIEW</code> result writes the new template to <code>.factory/update/</code>.</aside>
+      <aside class="callout"><strong>Clean rules update automatically.</strong> The command records matching templates before it pulls. Project-specific rules stay unchanged. A <code>REVIEW</code> result includes copyable resolution commands.</aside>
     </section>
 
     <section class="tutorial" id="session-review">

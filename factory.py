@@ -23,7 +23,7 @@ from typing import Any, Callable
 
 SOURCE_ROOT = Path(__file__).resolve().parent
 TEMPLATE_ROOT = SOURCE_ROOT / "templates" / "project" / ".factory"
-VERSION = "0.3.0.1"
+VERSION = "0.3.1.0"
 TEMPLATE_STATE_FORMAT = 1
 MANAGED_TEMPLATE_PATTERNS = (
     "config/*.md",
@@ -367,7 +367,12 @@ def adopt_matching_template_files(root: Path, template_root: Path | None = None)
     return adopted
 
 
-def sync_project_templates(root: Path, template_root: Path | None = None) -> dict[str, list[str]]:
+def sync_project_templates(
+    root: Path,
+    template_root: Path | None = None,
+    *,
+    use_upstream: bool = False,
+) -> dict[str, list[str]]:
     state = load_template_state(root)
     tracked = state["files"]
     result: dict[str, list[str]] = {
@@ -408,6 +413,12 @@ def sync_project_templates(root: Path, template_root: Path | None = None) -> dic
         if baseline_hash is not None and source_hash == baseline_hash:
             remove_generated_file(review_file)
             result["local"].append(relative)
+            continue
+        if use_upstream:
+            remove_generated_file(review_file)
+            atomic_text(project_file, source.read_text(), mode=source.stat().st_mode & 0o777)
+            tracked[relative] = source_hash
+            result["updated"].append(relative)
             continue
 
         atomic_text(review_file, source.read_text())
@@ -598,9 +609,49 @@ def print_process_output(result: subprocess.CompletedProcess[str]) -> None:
             print(value)
 
 
+def print_review_instructions(root: Path, relatives: list[str]) -> None:
+    print("REVIEW NEXT STEPS")
+    print(f"  {shlex.join(['cd', '--', str(root)])}")
+    print("  Inspect each change:")
+    for relative in relatives:
+        print(
+            "    "
+            + shlex.join(
+                [
+                    "diff",
+                    "-u",
+                    f".factory/{relative}",
+                    f".factory/update/{relative}.new",
+                ]
+            )
+        )
+    print("  Use every upstream rule:")
+    print("    factory update --no-pull --use-upstream")
+    print("  Keep or merge the current rules, then record that choice:")
+    command = ["factory", "update", "--no-pull"]
+    for relative in relatives:
+        command.extend(["--accept-current", relative])
+    print(f"    {shlex.join(command)}")
+
+
 def command_update(args: argparse.Namespace) -> int:
-    if args.source_only and args.accept_current:
-        raise FactoryError("--source-only cannot be combined with --accept-current")
+    if args.source_only and (args.accept_current or args.use_upstream):
+        raise FactoryError("--source-only cannot select a project rule resolution")
+    if args.accept_current and args.use_upstream:
+        raise FactoryError("--accept-current cannot be combined with --use-upstream")
+
+    if not args.no_pull and not args.source_only:
+        try:
+            root = project_root(args.project)
+        except FactoryError:
+            if args.project is not None or args.accept_current or args.use_upstream:
+                raise
+        else:
+            ensure_runtime_ignore(root)
+            adopted = adopt_matching_template_files(root)
+            if adopted:
+                print(f"BASELINE recorded {adopted} clean managed file(s) before pull")
+
     if args.no_pull:
         print(f"SOURCE keep local files at {SOURCE_ROOT}")
     else:
@@ -631,6 +682,8 @@ def command_update(args: argparse.Namespace) -> int:
             refreshed_command.extend(["--project", args.project])
         for relative in args.accept_current:
             refreshed_command.extend(["--accept-current", relative])
+        if args.use_upstream:
+            refreshed_command.append("--use-upstream")
         refreshed = run_text(refreshed_command, check=False)
         print_process_output(refreshed)
         return refreshed.returncode
@@ -638,7 +691,7 @@ def command_update(args: argparse.Namespace) -> int:
     try:
         root = project_root(args.project)
     except FactoryError:
-        if args.project is not None or args.accept_current:
+        if args.project is not None or args.accept_current or args.use_upstream:
             raise
         print("PROJECT skip; no .factory directory in the current path")
         print(f"UPDATE source version={current_source_version()}")
@@ -650,13 +703,15 @@ def command_update(args: argparse.Namespace) -> int:
     accepted = accept_current_templates(root, args.accept_current)
     for relative in accepted:
         print(f"ACCEPT  .factory/{relative}")
-    result = sync_project_templates(root)
+    result = sync_project_templates(root, use_upstream=args.use_upstream)
     for status in ("added", "updated", "current", "local"):
         for relative in result[status]:
             print(f"{status.upper():<7} .factory/{relative}")
     for relative in result["review"]:
         print(f"REVIEW  .factory/{relative}")
         print(f"        new template: .factory/update/{relative}.new")
+    if result["review"]:
+        print_review_instructions(root, result["review"])
     print(
         f"UPDATE project={root} version={current_source_version()} "
         f"updated={len(result['updated']) + len(result['added'])} "
@@ -1241,6 +1296,11 @@ def parser() -> argparse.ArgumentParser:
         default=[],
         metavar="FILE",
         help="keep a reviewed project file and mark the latest template as handled",
+    )
+    update.add_argument(
+        "--use-upstream",
+        action="store_true",
+        help="replace every rule that requires review with its upstream template",
     )
     update.add_argument("--skip-install", action="store_true", help=argparse.SUPPRESS)
     update.set_defaults(handler=command_update)
