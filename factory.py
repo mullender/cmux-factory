@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import selectors
 import shlex
 import shutil
 import subprocess
@@ -23,7 +24,7 @@ from typing import Any, Callable
 
 SOURCE_ROOT = Path(__file__).resolve().parent
 TEMPLATE_ROOT = SOURCE_ROOT / "templates" / "project" / ".factory"
-VERSION = "0.3.1.0"
+VERSION = "0.3.2.0"
 TEMPLATE_STATE_FORMAT = 1
 MANAGED_TEMPLATE_PATTERNS = (
     "config/*.md",
@@ -32,6 +33,10 @@ MANAGED_TEMPLATE_PATTERNS = (
 )
 RUNTIME_IGNORE_ENTRIES = ("run/", "inbox/", "update/", "agents/*/STATUS.json")
 STOP_CMUX_TIMEOUT_SECONDS = 2.0
+WATCHDOG_INBOX_SCAN_SECONDS = 2.0
+WATCHDOG_INBOX_REPORT_SECONDS = 60.0
+WATCHDOG_WAKE_RETRY_SECONDS = 30.0
+IDLE_AGENT_STATES = {"ready", "idle", "done"}
 
 
 class FactoryError(RuntimeError):
@@ -926,6 +931,7 @@ def status_data(root: Path) -> dict[str, Any]:
             continue
         item = dict(agent)
         item["surface_live"] = item.get("surface_id") in live
+        item["inbox_unread"] = len(unread_mail(root, name))
         result_agents[name] = item
     result["agents"] = result_agents
     return result
@@ -940,12 +946,13 @@ def command_status(args: argparse.Namespace) -> int:
     print(f"FACTORY {Path(data['project']).name} active={str(data.get('active', False)).lower()}")
     if data.get("workspace_id"):
         print(f"WORKSPACE {data['workspace_id']}")
-    print("AGENT       GEN  STATE            LIVE  REASON")
+    print("AGENT       GEN  STATE            LIVE  INBOX  REASON")
     for name, agent in data.get("agents", {}).items():
         print(
             f"{name:<11} {agent.get('generation', '-'):>3}  "
             f"{str(agent.get('state', 'unknown')):<16} "
             f"{str(agent.get('surface_live', False)).lower():<5} "
+            f"{agent.get('inbox_unread', 0):>5}  "
             f"{agent.get('reason', '')}"
         )
     record = data.get("last_watchdog_record")
@@ -1002,6 +1009,33 @@ def write_mail(root: Path, sender: str, recipient: str, kind: str, message: str)
     return path
 
 
+def wake_recipient(root: Path, recipient: str, *, urgent: bool = False) -> str:
+    registry, _ = with_registry(root)
+    if not registry.get("active"):
+        return "stored"
+    agent = registry.get("agents", {}).get(recipient)
+    workspace_id = registry.get("workspace_id")
+    if not isinstance(agent, dict) or not isinstance(workspace_id, str):
+        return "stored"
+    surface_id = agent.get("surface_id")
+    if not isinstance(surface_id, str) or agent.get("state") not in IDLE_AGENT_STATES:
+        return "stored"
+
+    count = len(unread_mail(root, recipient))
+    noun = "message" if count == 1 else "messages"
+    description = "urgent mail" if urgent else f"{count} unread {noun}"
+    send_turn(
+        workspace_id,
+        surface_id,
+        (
+            f"Factory inbox: {description} for {recipient}. "
+            f"Run `factory inbox {recipient} --archive` now and process each message."
+        ),
+    )
+    set_agent_state(root, recipient, "working", f"inbox wake-up sent for {count} unread {noun}")
+    return "agent pinged"
+
+
 def ping_recipient(root: Path, recipient: str, *, urgent: bool) -> str:
     registry, _ = with_registry(root)
     if not registry.get("active"):
@@ -1014,13 +1048,8 @@ def ping_recipient(root: Path, recipient: str, *, urgent: bool) -> str:
     if not isinstance(surface_id, str):
         return "stored"
 
-    if urgent and agent.get("state") in {"ready", "idle"}:
-        send_turn(
-            workspace_id,
-            surface_id,
-            f"Factory inbox: urgent mail for {recipient}. Run `factory inbox {recipient} --archive`.",
-        )
-        return "agent pinged"
+    if urgent and agent.get("state") in IDLE_AGENT_STATES:
+        return wake_recipient(root, recipient, urgent=True)
 
     if urgent:
         cmux(
@@ -1032,6 +1061,44 @@ def ping_recipient(root: Path, recipient: str, *, urgent: bool) -> str:
         )
         return "user notified"
     return "stored"
+
+
+def monitor_inboxes(
+    root: Path,
+    previous_counts: dict[str, int],
+    wake_attempts: dict[str, float],
+    *,
+    now: float | None = None,
+) -> dict[str, int]:
+    registry, _ = with_registry(root)
+    checked_at = time.monotonic() if now is None else now
+    counts: dict[str, int] = {}
+    for name, agent in registry.get("agents", {}).items():
+        if not isinstance(agent, dict):
+            continue
+        count = len(unread_mail(root, name))
+        counts[name] = count
+        if previous_counts.get(name) != count:
+            journal(root, "OBSERVE", f"inbox unread={count}", agent=name)
+        if count == 0 or agent.get("state") not in IDLE_AGENT_STATES:
+            continue
+        last_attempt = wake_attempts.get(name)
+        if last_attempt is not None and checked_at - last_attempt < WATCHDOG_WAKE_RETRY_SECONDS:
+            continue
+        wake_attempts[name] = checked_at
+        state = str(agent.get("state") or "unknown")
+        journal(root, "DECIDE", f"wake agent because inbox unread={count} and state={state}", agent=name)
+        journal(root, "ACT", "send one inbox wake-up turn", agent=name)
+        try:
+            action = wake_recipient(root, name)
+        except FactoryError as exc:
+            journal(root, "RESULT", f"wake-up failed: {exc}", agent=name)
+            continue
+        if action == "agent pinged":
+            journal(root, "RESULT", "wake-up sent; agent state is working", agent=name)
+        else:
+            journal(root, "RESULT", "wake-up skipped because agent state changed", agent=name)
+    return counts
 
 
 def handle_watch_event(root: Path, event: dict[str, Any]) -> None:
@@ -1085,7 +1152,11 @@ def command_watch(args: argparse.Namespace) -> int:
     if not registry.get("active"):
         raise FactoryError("factory is not active")
     cursor = runtime_dir(root) / "events.cursor"
-    journal(root, "START", "watchdog event stream started")
+    journal(
+        root,
+        "START",
+        f"watchdog event stream and {WATCHDOG_INBOX_SCAN_SECONDS:g}s inbox scan started",
+    )
     command = [
         cmux_bin(), "events",
         "--category", "agent",
@@ -1095,21 +1166,50 @@ def command_watch(args: argparse.Namespace) -> int:
         "--no-ack",
         "--no-heartbeat",
     ]
-    process = subprocess.Popen(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0)
     assert process.stdout is not None
+    selector = selectors.DefaultSelector()
+    selector.register(process.stdout, selectors.EVENT_READ)
+    pending = b""
+    counts: dict[str, int] = {}
+    wake_attempts: dict[str, float] = {}
+    next_scan = 0.0
+    next_report = time.monotonic() + WATCHDOG_INBOX_REPORT_SECONDS
     try:
-        for line in process.stdout:
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                journal(root, "ERROR", f"invalid event line: {line.strip()[:120]}")
-                continue
-            if isinstance(event, dict) and event.get("type") == "event":
-                handle_watch_event(root, event)
+        running = True
+        while running:
+            current = time.monotonic()
+            if current >= next_scan:
+                counts = monitor_inboxes(root, counts, wake_attempts, now=current)
+                next_scan = current + WATCHDOG_INBOX_SCAN_SECONDS
+                if current >= next_report:
+                    summary = ", ".join(f"{name}={count}" for name, count in sorted(counts.items()))
+                    journal(root, "CHECK", f"inbox counts: {summary or 'no agents'}")
+                    next_report = current + WATCHDOG_INBOX_REPORT_SECONDS
+
+            timeout = max(0.0, next_scan - time.monotonic())
+            for key, _ in selector.select(timeout):
+                chunk = os.read(key.fd, 65536)
+                if not chunk:
+                    running = False
+                    break
+                pending += chunk
+                while b"\n" in pending:
+                    raw_line, pending = pending.split(b"\n", 1)
+                    line = raw_line.decode(errors="replace")
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        journal(root, "ERROR", f"invalid event line: {line.strip()[:120]}")
+                        continue
+                    if isinstance(event, dict) and event.get("type") == "event":
+                        handle_watch_event(root, event)
     except KeyboardInterrupt:
         journal(root, "STOP", "watchdog interrupted")
     finally:
-        process.terminate()
+        selector.close()
+        if process.poll() is None:
+            process.terminate()
         try:
             process.wait(timeout=2)
         except subprocess.TimeoutExpired:

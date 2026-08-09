@@ -8,7 +8,7 @@ All agents read and write plain files under `.factory/`.
 
 ## Proof-of-concept scope
 
-The proof of concept does six things:
+The proof of concept does seven things:
 
 1. It uses the current cmux tab as the Lead.
 2. It creates Builder, Reviewer, and Watchdog tabs in the same pane.
@@ -16,6 +16,7 @@ The proof of concept does six things:
 4. It records exact cmux workspace, pane, and surface IDs.
 5. It shows a readable watchdog journal and status report.
 6. It sends agent messages through local inbox files.
+7. It wakes an idle agent when that agent has unread mail.
 
 The watchdog reports a closed agent surface and tells the Lead. It does not
 restart the agent in this version. Recovery comes after the launch and
@@ -27,10 +28,19 @@ The Watchdog monitors agents. It uses the structured `cmux events` stream first
 and can use a targeted `read-screen` when an event lacks enough detail. The
 Lead does not poll worker terminals.
 
-Agents exchange files under `.factory/inbox/<recipient>/`. The Lead checks only
-`.factory/inbox/lead/` at turn boundaries. An urgent Watchdog message can send
-one short ping to an idle Lead. If the Lead is working, cmux shows a
-notification and does not type into the active prompt.
+Agents exchange files under `.factory/inbox/<recipient>/`. Each agent checks its
+own inbox at turn boundaries. The Watchdog also counts unread mail every two
+seconds. If an agent is idle and its inbox is not empty, the Watchdog sends one
+short wake-up turn. It does not interrupt a working agent. It retries after 30
+seconds if the agent becomes idle without clearing the inbox.
+
+`factory status` shows the current unread count for each agent. The Watchdog
+journal records count changes, each wake-up decision, each action, and its
+result. It also records an inbox count summary every 60 seconds.
+
+Urgent mail still has a direct path. It pings an idle recipient at once. If the
+recipient is working, cmux shows a notification and does not type into the
+active prompt.
 
 Mail uses a Lead-centered topology. Builder, Reviewer, and Watchdog can send
 mail only to the Lead. Only the Lead can send mail to a non-Lead agent. The

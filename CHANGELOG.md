@@ -2,6 +2,15 @@
 
 This file records user-visible changes to cmux-factory.
 
+## [0.3.2.0] - 2026-08-09
+
+### Added
+
+- Count unread mail for every agent in the Watchdog.
+- Wake an idle agent when its inbox is not empty.
+- Show each agent's unread count in `factory status`.
+- Record inbox count changes and periodic summaries in the Watchdog journal.
+
 ## [0.3.1.0] - 2026-08-08
 
 ### Added

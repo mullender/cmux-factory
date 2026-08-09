@@ -568,6 +568,61 @@ class FactoryTests(unittest.TestCase):
             self.assertIn("git status", mail[0].read_text())
             self.assertTrue(any(call[0] == "send" and "urgent mail" in call[-1] for call in calls))
 
+    def test_watchdog_wakes_an_idle_agent_with_unread_mail(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.init_project(root)
+            self.register_factory(root)
+            factory.set_agent_state(root, "builder", "idle", "agent Stop hook")
+            factory.write_mail(root, "lead", "builder", "message", "Please run the focused test.")
+            turns: list[tuple[str, str, str]] = []
+
+            with mock.patch.object(
+                factory,
+                "send_turn",
+                side_effect=lambda workspace, surface, text: turns.append((workspace, surface, text)),
+            ):
+                counts = factory.monitor_inboxes(root, {}, {}, now=100.0)
+
+            self.assertEqual(counts["builder"], 1)
+            self.assertEqual(len(turns), 1)
+            self.assertEqual(turns[0][:2], ("WORKSPACE", "BUILDER"))
+            self.assertIn("1 unread message", turns[0][2])
+            registry, _ = factory.with_registry(root)
+            self.assertEqual(registry["agents"]["builder"]["state"], "working")
+            journal = (root / ".factory/run/watchdog.jsonl").read_text()
+            self.assertIn('"phase": "OBSERVE"', journal)
+            self.assertIn('"phase": "DECIDE"', journal)
+            self.assertIn('"phase": "ACT"', journal)
+            self.assertIn('"phase": "RESULT"', journal)
+
+    def test_watchdog_does_not_interrupt_a_working_agent_with_unread_mail(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.init_project(root)
+            self.register_factory(root)
+            factory.set_agent_state(root, "builder", "working", "implementing the task")
+            factory.write_mail(root, "lead", "builder", "message", "Use the smaller fixture.")
+
+            with mock.patch.object(factory, "send_turn") as send_turn:
+                counts = factory.monitor_inboxes(root, {}, {}, now=100.0)
+
+            self.assertEqual(counts["builder"], 1)
+            send_turn.assert_not_called()
+
+    def test_status_includes_each_agent_inbox_volume(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.init_project(root)
+            self.register_factory(root)
+            factory.write_mail(root, "lead", "builder", "message", "Please review the fixture.")
+
+            with mock.patch.object(factory, "live_surface_ids", return_value={"LEAD", "BUILDER"}):
+                data = factory.status_data(root)
+
+            self.assertEqual(data["agents"]["lead"]["inbox_unread"], 0)
+            self.assertEqual(data["agents"]["builder"]["inbox_unread"], 1)
+
     def test_status_json_is_machine_readable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -605,6 +660,7 @@ class FactoryTests(unittest.TestCase):
             text = output.getvalue()
             self.assertIn("FACTORY", text)
             self.assertIn("builder", text)
+            self.assertIn("INBOX", text)
             self.assertIn("WATCHDOG", text)
 
     def test_check_in_and_note_write_durable_records(self) -> None:

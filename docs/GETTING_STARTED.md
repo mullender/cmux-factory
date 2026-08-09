@@ -79,8 +79,10 @@ Run factory doctor --project, then run factory start. You are the Lead.
 
 ## Use the inbox
 
-The Watchdog monitors worker agents. The Lead does not poll their terminals.
-The Lead checks its own inbox at the start and end of each turn:
+The Watchdog monitors agents and counts each inbox every two seconds. If an
+agent is idle and has unread mail, the Watchdog wakes it. The Lead does not poll
+worker terminals. Each agent still checks its own inbox at the start and end of
+each turn:
 
 ```sh
 factory inbox lead
@@ -99,9 +101,13 @@ Builder, Reviewer, and Watchdog can send mail only to the Lead. Only the Lead
 can send mail to a non-Lead agent. Workers cannot message each other. The
 command rejects mail that breaks this rule.
 
-Urgent mail pings an idle recipient. If the recipient is working, cmux shows a
-notification instead. The Watchdog writes permission requests and closed-tab
-details to the Lead inbox.
+Normal mail wakes an idle recipient through the Watchdog. It does not interrupt
+a working agent. Urgent mail pings an idle recipient at once. If the recipient
+is working, cmux shows a notification instead. The Watchdog writes permission
+requests and closed-tab details to the Lead inbox.
+
+Use `factory status` to see each inbox count. Use `factory events --follow` to
+see the Watchdog observation, decision, action, and result.
 
 ## Next steps
 

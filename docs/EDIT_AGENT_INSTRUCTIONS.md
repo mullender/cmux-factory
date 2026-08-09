@@ -81,8 +81,8 @@ Shared rules tell agents to check only their own inbox at turn boundaries. The
 Watchdog owns terminal monitoring. Keep that boundary when you edit prompts:
 
 ```text
-Watchdog -> cmux events or targeted screen checks -> recipient inbox
-Lead     -> .factory/inbox/lead/ only
+Watchdog -> cmux events + inbox counts -> targeted agent wake-up or Lead inbox
+Lead     -> its own inbox + mail commands
 ```
 
 Mail routes through the Lead. Non-Lead agents can send mail only to the Lead,
