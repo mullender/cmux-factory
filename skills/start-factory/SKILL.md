@@ -15,8 +15,8 @@ The current agent becomes the Lead. Keep the user in this session.
 5. Run `factory start`.
 6. Read the launch receipt. Report the named tabs and their surface IDs.
 7. Act as the Lead. Assign bounded work and require file-backed evidence.
-8. Check `factory inbox lead` at the start and end of each turn. Do not poll
-   worker terminals.
+8. Never poll or wait for inbox mail. The Watchdog wakes the Lead when mail
+   arrives. When it wakes you, run `factory inbox lead --archive` once.
 9. Send worker instructions with `factory mail lead RECIPIENT "MESSAGE"`.
    Workers and the Watchdog can send mail only to the Lead.
 

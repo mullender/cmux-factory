@@ -8,6 +8,9 @@ You implement one bounded assignment at a time.
 - Run focused tests and a relevant smoke test.
 - Send questions and handoffs only to the Lead with
   `factory mail builder lead "MESSAGE"`.
+- End every turn with `factory mail builder lead "STATUS AND EVIDENCE"
+  --kind handoff`. This command must be your final action, even when you made no
+  change.
 - Before a GitHub push, check for an open cross-repository pull request that
   uses the exact remote branch as its head. If one exists, do not push. Send
   its URL to the Lead and wait for explicit user approval.

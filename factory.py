@@ -36,6 +36,7 @@ STOP_CMUX_TIMEOUT_SECONDS = 2.0
 WATCHDOG_INBOX_SCAN_SECONDS = 2.0
 WATCHDOG_INBOX_REPORT_SECONDS = 60.0
 WATCHDOG_WAKE_RETRY_SECONDS = 30.0
+STOP_EVENT_DEDUP_SECONDS = 1.0
 IDLE_AGENT_STATES = {"ready", "idle", "done"}
 
 
@@ -492,10 +493,16 @@ def compose_prompt(root: Path, name: str, agent: dict[str, Any]) -> str:
             f"You can send mail to any non-Lead agent with `factory mail {name} RECIPIENT \"MESSAGE\"`. "
             "Non-Lead agents can send mail only to you."
         )
+        handoff_rule = ""
     else:
         mail_rule = (
             f"You can send mail only to the Lead with `factory mail {name} {lead_name} \"MESSAGE\"`. "
             "Do not message another non-Lead agent."
+        )
+        handoff_rule = (
+            " Every turn must end with a handoff to the Lead, even when you made no change. "
+            f"Your final action must be `factory mail {name} {lead_name} \"STATUS AND EVIDENCE\" "
+            "--kind handoff`. State whether the work is ready, blocked, or done."
         )
     return "\n\n".join(
         [
@@ -508,14 +515,14 @@ def compose_prompt(root: Path, name: str, agent: dict[str, Any]) -> str:
             (
                 "# Check-in\n\n"
                 f"Run `factory check-in {name} working \"SHORT SUMMARY\"` when work starts. "
-                f"Run `factory check-in {name} idle \"SHORT SUMMARY\"` when a turn ends. "
+                "The Watchdog records the idle state when cmux emits the Stop hook. "
                 f"Keep durable notes under `.factory/agents/{name}/`."
             ),
             (
                 "# Inbox\n\n"
-                f"Run `factory inbox {name}` at the start and end of each turn. "
-                f"After you process all shown messages, run `factory inbox {name} --archive`. "
-                f"Do not poll another agent's terminal. {mail_rule}"
+                "Never poll or wait for mail. Do not run sleep loops. The Watchdog will wake you "
+                f"when your inbox has mail. When it wakes you, run `factory inbox {name} --archive` "
+                f"once and process every shown message. {mail_rule}{handoff_rule}"
             ),
         ]
     )
@@ -573,6 +580,53 @@ def set_agent_state(root: Path, name: str, state: str, reason: str) -> None:
             agent["state"] = state
             agent["reason"] = reason
             agent["updated_at"] = utc_now()
+
+    with_registry(root, update)
+
+
+def begin_agent_turn(root: Path, name: str) -> None:
+    def update(registry: dict[str, Any]) -> None:
+        agent = registry.get("agents", {}).get(name)
+        if not isinstance(agent, dict):
+            return
+        agent["state"] = "working"
+        agent["reason"] = "agent turn started"
+        agent["updated_at"] = utc_now()
+        if name == registry.get("lead"):
+            return
+        agent["turn_mail_sent"] = False
+        agent["turn_started_at"] = utc_now()
+        agent["handoff_reminders"] = 0
+
+    with_registry(root, update)
+
+
+def record_prompt_submit(root: Path, name: str) -> None:
+    def update(registry: dict[str, Any]) -> None:
+        agent = registry.get("agents", {}).get(name)
+        if not isinstance(agent, dict):
+            return
+        if name != registry.get("lead"):
+            if agent.get("state") != "working":
+                agent["turn_mail_sent"] = False
+                agent["turn_started_at"] = utc_now()
+                agent["handoff_reminders"] = 0
+        agent["state"] = "working"
+        agent["reason"] = "agent UserPromptSubmit hook"
+        agent["updated_at"] = utc_now()
+
+    with_registry(root, update)
+
+
+def mark_turn_mail_sent(root: Path, name: str) -> None:
+    def update(registry: dict[str, Any]) -> None:
+        if name == registry.get("lead"):
+            return
+        agent = registry.get("agents", {}).get(name)
+        if not isinstance(agent, dict):
+            return
+        agent["turn_mail_sent"] = True
+        agent["last_handoff_at"] = utc_now()
 
     with_registry(root, update)
 
@@ -1024,14 +1078,21 @@ def wake_recipient(root: Path, recipient: str, *, urgent: bool = False) -> str:
     count = len(unread_mail(root, recipient))
     noun = "message" if count == 1 else "messages"
     description = "urgent mail" if urgent else f"{count} unread {noun}"
-    send_turn(
-        workspace_id,
-        surface_id,
-        (
-            f"Factory inbox: {description} for {recipient}. "
-            f"Run `factory inbox {recipient} --archive` now and process each message."
-        ),
-    )
+    previous_state = str(agent.get("state") or "idle")
+    previous_reason = str(agent.get("reason") or "before inbox wake-up")
+    begin_agent_turn(root, recipient)
+    try:
+        send_turn(
+            workspace_id,
+            surface_id,
+            (
+                f"Factory inbox: {description} for {recipient}. "
+                f"Run `factory inbox {recipient} --archive` now and process each message."
+            ),
+        )
+    except FactoryError:
+        set_agent_state(root, recipient, previous_state, previous_reason)
+        raise
     set_agent_state(root, recipient, "working", f"inbox wake-up sent for {count} unread {noun}")
     return "agent pinged"
 
@@ -1101,6 +1162,120 @@ def monitor_inboxes(
     return counts
 
 
+def alert_lead_about_handoff(root: Path, name: str, message: str) -> None:
+    registry, _ = with_registry(root)
+    lead_name = registry.get("lead")
+    if not isinstance(lead_name, str):
+        journal(root, "RESULT", "cannot alert Lead because no Lead is registered", agent=name)
+        return
+    mail = write_mail(root, "watchdog", lead_name, "blocked", message)
+    action = ping_recipient(root, lead_name, urgent=True)
+    journal(root, "ACT", f"wrote {mail.relative_to(root)}; {action}", agent=name)
+    journal(root, "RESULT", "Lead inbox contains the missing-handoff report", agent=name)
+
+
+def handle_agent_stop(root: Path, name: str, event_id: str | None, *, now: float | None = None) -> None:
+    stopped_at = time.time() if now is None else now
+    registry, _ = with_registry(root)
+    agent = registry.get("agents", {}).get(name)
+    if not isinstance(agent, dict):
+        return
+    handoff_sent = bool(agent.get("turn_mail_sent"))
+    previous_stop = agent.get("last_stop_at")
+    duplicate = isinstance(previous_stop, (int, float)) and stopped_at - previous_stop < STOP_EVENT_DEDUP_SECONDS
+    journal(
+        root,
+        "STOP",
+        (
+            f"hook received event={event_id or '?'} state={agent.get('state', 'unknown')} "
+            f"handoff_sent={str(handoff_sent).lower()} reminders={agent.get('handoff_reminders', 0)}"
+        ),
+        agent=name,
+    )
+
+    def record_stop(target: dict[str, Any]) -> None:
+        current = target.get("agents", {}).get(name)
+        if isinstance(current, dict):
+            current["last_stop_at"] = stopped_at
+
+    with_registry(root, record_stop)
+    if duplicate:
+        journal(root, "DECIDE", "duplicate Stop hook ignored", agent=name)
+        journal(root, "RESULT", "agent state is unchanged", agent=name)
+        return
+
+    lead_name = registry.get("lead")
+    if name == lead_name:
+        journal(root, "DECIDE", "Lead has no outbound handoff requirement", agent=name)
+        set_agent_state(root, name, "idle", "agent Stop hook")
+        journal(root, "RESULT", "Lead state is idle", agent=name)
+        return
+
+    if handoff_sent:
+        journal(root, "DECIDE", "accept Stop because this turn sent mail to Lead", agent=name)
+        set_agent_state(root, name, "idle", "agent Stop hook after Lead handoff")
+        journal(root, "RESULT", "worker state is idle", agent=name)
+        return
+
+    reminders = int(agent.get("handoff_reminders") or 0)
+    if reminders == 0:
+        workspace_id = registry.get("workspace_id")
+        surface_id = agent.get("surface_id")
+        if not isinstance(workspace_id, str) or not isinstance(surface_id, str):
+            set_agent_state(root, name, "needs-attention", "missing Lead handoff; surface is unavailable")
+            alert_lead_about_handoff(
+                root,
+                name,
+                f"Agent `{name}` ended a turn without the required Lead handoff, and its surface is unavailable.",
+            )
+            return
+
+        def prepare_reminder(target: dict[str, Any]) -> None:
+            current = target.get("agents", {}).get(name)
+            if not isinstance(current, dict):
+                return
+            current["state"] = "working"
+            current["reason"] = "Watchdog requested the missing Lead handoff"
+            current["handoff_reminders"] = 1
+            current["updated_at"] = utc_now()
+
+        with_registry(root, prepare_reminder)
+        journal(root, "DECIDE", "wake worker because Stop had no Lead handoff", agent=name)
+        journal(root, "ACT", "send one handoff reminder turn", agent=name)
+        try:
+            send_turn(
+                workspace_id,
+                surface_id,
+                (
+                    "Factory handoff required: this non-Lead turn ended without mail to Lead. "
+                    f"Send one final handoff now with `factory mail {name} {lead_name} "
+                    '"STATUS AND EVIDENCE" --kind handoff`. Do not continue project work.'
+                ),
+            )
+        except FactoryError as exc:
+            set_agent_state(root, name, "needs-attention", "handoff reminder failed")
+            journal(root, "RESULT", f"handoff reminder failed: {exc}", agent=name)
+            alert_lead_about_handoff(
+                root,
+                name,
+                f"Agent `{name}` ended a turn without a Lead handoff. The Watchdog could not send its reminder: {exc}",
+            )
+            return
+        journal(root, "RESULT", "handoff reminder sent; worker state is working", agent=name)
+        return
+
+    journal(root, "DECIDE", "mark needs-attention after the reminder turn sent no Lead handoff", agent=name)
+    set_agent_state(root, name, "needs-attention", "ended two turns without a Lead handoff")
+    alert_lead_about_handoff(
+        root,
+        name,
+        (
+            f"Agent `{name}` ended two turns without the required Lead handoff. "
+            "The second turn was the Watchdog reminder. The agent is marked needs-attention."
+        ),
+    )
+
+
 def handle_watch_event(root: Path, event: dict[str, Any]) -> None:
     registry, _ = with_registry(root)
     if event.get("workspace_id") != registry.get("workspace_id"):
@@ -1141,8 +1316,10 @@ def handle_watch_event(root: Path, event: dict[str, Any]) -> None:
                 journal(root, "ACT", f"wrote {mail.relative_to(root)}; {action}", agent=name)
             journal(root, "RESULT", "Lead inbox contains the permission request", agent=name)
         elif hook == "Stop":
-            set_agent_state(root, name, "idle", "agent Stop hook")
-        elif hook in {"UserPromptSubmit", "PreToolUse"}:
+            handle_agent_stop(root, name, event.get("id"))
+        elif hook == "UserPromptSubmit":
+            record_prompt_submit(root, name)
+        elif hook == "PreToolUse":
             set_agent_state(root, name, "working", f"agent {hook} hook")
 
 
@@ -1298,6 +1475,8 @@ def command_mail(args: argparse.Namespace) -> int:
     if args.sender != lead_name and args.recipient != lead_name:
         raise FactoryError(f"{args.sender} can send mail only to the Lead ({lead_name})")
     path = write_mail(root, args.sender, args.recipient, args.kind, args.message)
+    if args.sender not in {lead_name, "watchdog"}:
+        mark_turn_mail_sent(root, args.sender)
     action = ping_recipient(root, args.recipient, urgent=args.urgent)
     print(f"MAIL  {path.relative_to(root)}; {action}")
     return 0

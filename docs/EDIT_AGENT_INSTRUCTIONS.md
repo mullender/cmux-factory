@@ -77,12 +77,13 @@ rewrite its own instructions.
 
 ## Change inbox behavior
 
-Shared rules tell agents to check only their own inbox at turn boundaries. The
-Watchdog owns terminal monitoring. Keep that boundary when you edit prompts:
+Shared rules tell agents never to poll or wait for inbox mail. The Watchdog owns
+mail wake-ups and terminal monitoring. Keep that boundary when you edit prompts:
 
 ```text
 Watchdog -> cmux events + inbox counts -> targeted agent wake-up or Lead inbox
-Lead     -> its own inbox + mail commands
+Agent    -> reads its inbox only after a Watchdog wake-up
+Worker   -> ends every turn with a mail handoff to Lead
 ```
 
 Mail routes through the Lead. Non-Lead agents can send mail only to the Lead,

@@ -8,7 +8,7 @@ All agents read and write plain files under `.factory/`.
 
 ## Proof-of-concept scope
 
-The proof of concept does seven things:
+The proof of concept does eight things:
 
 1. It uses the current cmux tab as the Lead.
 2. It creates Builder, Reviewer, and Watchdog tabs in the same pane.
@@ -17,6 +17,7 @@ The proof of concept does seven things:
 5. It shows a readable watchdog journal and status report.
 6. It sends agent messages through local inbox files.
 7. It wakes an idle agent when that agent has unread mail.
+8. It requires each non-Lead turn to end with mail to the Lead.
 
 The watchdog reports a closed agent surface and tells the Lead. It does not
 restart the agent in this version. Recovery comes after the launch and
@@ -28,11 +29,21 @@ The Watchdog monitors agents. It uses the structured `cmux events` stream first
 and can use a targeted `read-screen` when an event lacks enough detail. The
 Lead does not poll worker terminals.
 
-Agents exchange files under `.factory/inbox/<recipient>/`. Each agent checks its
-own inbox at turn boundaries. The Watchdog also counts unread mail every two
-seconds. If an agent is idle and its inbox is not empty, the Watchdog sends one
-short wake-up turn. It does not interrupt a working agent. It retries after 30
-seconds if the agent becomes idle without clearing the inbox.
+Agents exchange files under `.factory/inbox/<recipient>/`. Agents do not poll or
+wait for mail. The Watchdog counts unread mail every two seconds. If an agent is
+idle and its inbox is not empty, the Watchdog sends one short wake-up turn. It
+does not interrupt a working agent. It retries after 30 seconds if the agent
+becomes idle without clearing the inbox.
+
+Every non-Lead turn must send mail to the Lead before cmux emits its Stop hook.
+The Watchdog logs each Stop event and whether that turn sent a handoff. If it did
+not, the Watchdog sends one reminder turn. If that turn also ends without mail,
+the Watchdog marks the agent as needing attention and alerts the Lead.
+
+```text
+STOP    builder    hook received event=... state=working handoff_sent=false reminders=0
+DECIDE  builder    wake worker because Stop had no Lead handoff
+```
 
 `factory status` shows the current unread count for each agent. The Watchdog
 journal records count changes, each wake-up decision, each action, and its
@@ -52,7 +63,6 @@ Durable facts and lessons stay under `.factory/brain/`.
 ```sh
 factory mail builder lead "The change is ready for review" --kind handoff
 factory mail lead builder "Please add the focused test"
-factory inbox lead
 factory inbox lead --archive
 ```
 
