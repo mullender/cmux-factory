@@ -79,6 +79,10 @@ commit and its recorded submodule commits before it sends mail to Reviewer.
 Worker processes start in the main project root so they can use shared factory
 state. Their prompts require source and Git work in the named worktree.
 
+Only Lead can push code. Builder and Reviewer hand off commits and never push.
+Lead asks for permission before each push that updates an open pull request in
+a public repository.
+
 ```sh
 factory mail lead reviewer "Review this parser change only" \
   --kind assignment --base BASE_SHA --head HEAD_SHA

@@ -130,15 +130,17 @@ Edit `.factory/roles/reviewer.md` to change this policy. Keep the two report
 sections in `.factory/agents/reviewer/HANDOFF.md` so that the Lead can see the
 scope boundary.
 
-## Protect open pull requests in other repositories
+## Let only the Lead push code
 
-Before a GitHub push, the Lead and Builder must check whether the exact remote
-branch is the head of an open cross-repository pull request. This commonly
-happens when a branch in a fork has an open pull request in an upstream
-repository. A push to the fork would also update the upstream pull request.
+Builder commits code and sends the commit to the Lead. Builder and Reviewer
+never push. Only the Lead can push.
 
-Search by branch, then verify each candidate's head repository and
-`isCrossRepository` value:
+Before a push, the Lead must check whether the exact remote branch is the head
+of an open pull request in a public repository. This includes pull requests in
+the same repository and pull requests from a fork. A push updates the public
+pull request at once.
+
+Search by branch, then verify each candidate's head repository:
 
 ```sh
 branch=$(git branch --show-current)
@@ -146,10 +148,15 @@ gh search prs --head "$branch" --state open \
   --json repository,number,url
 ```
 
+For each matching pull request, use `gh pr view` to verify `headRepository` and
+`headRefName`. Use `gh repo view OWNER/REPOSITORY --json visibility` to check
+the visibility of the pull request repository.
+
 Do not block on a branch-name match alone. Branch names can be the same in
-unrelated repositories. Block only when the open pull request uses the exact
-remote repository and branch as its head. Show the pull request URL and wait
-for explicit user approval before a push.
+unrelated repositories. Ask only when an open pull request uses the exact
+remote repository and branch as its head and its repository is public. Show
+the pull request URL and wait for explicit user permission. Permission applies
+to one push only.
 
 ## Edit the defaults for future projects
 
