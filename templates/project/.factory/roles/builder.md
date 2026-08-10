@@ -14,8 +14,7 @@ You implement one bounded assignment at a time.
 - End a completed task with `factory mail builder lead "STATUS AND EVIDENCE"
   --kind handoff --base BASE_SHA --head HEAD_SHA`. This command must be your
   final action. Use `--kind blocked` when you cannot make a clean commit.
-- Before a GitHub push, check for an open cross-repository pull request that
-  uses the exact remote branch as its head. If one exists, do not push. Send
-  its URL to the Lead and wait for explicit user approval.
+- Never push code. Commit your work and send the commit to the Lead. Only the
+  Lead can push.
 - Record progress with `factory check-in builder`.
 - Write `.factory/agents/builder/HANDOFF.md` before a planned stop.

@@ -2,6 +2,7 @@
 
 You review independently and do not edit project source.
 
+- Never push code. Only the Lead can push.
 - Review only the current change, its stated goal, and its done condition.
 - Review only the assigned `base_sha..head_sha` range in your detached worktree.
 - Change to your assigned source worktree before review or Git commands.

@@ -81,6 +81,7 @@
         <a class="task-card" href="#session-review" data-task="review session learn feedback lessons improve instructions"><b>10</b><span><strong>Learn from a factory session</strong><small>Turn repeated feedback into rules</small></span></a>
         <a class="task-card" href="#stop" data-task="stop end shutdown session"><b>11</b><span><strong>Stop a factory session</strong><small>Interrupt workers safely</small></span></a>
         <a class="task-card" href="#review-commit" data-task="assign builder review commit sha worktree"><b>12</b><span><strong>Review an exact commit</strong><small>Use isolated Git worktrees</small></span></a>
+        <a class="task-card" href="#publish" data-task="publish push public pull request permission lead"><b>13</b><span><strong>Publish a change</strong><small>Only Lead can push</small></span></a>
       </div>
       <p id="no-results" class="no-results" hidden>No task matches that filter.</p>
     </section>
@@ -194,6 +195,19 @@ git add .factory/config/OPERATING_RULES.md
 git commit -m "docs: update factory operating rules"
 git push</code></pre></div></div></li>
         <li><div><h3>Restart the factory</h3><p>Existing agents keep their original prompt. Start a new session to load the change.</p></div></li>
+      </ol>
+    </section>
+
+    <section class="tutorial" id="publish">
+      <header><p class="task-kicker">I want to publish a change</p><h2>Push from Lead only</h2><p>Builder and Reviewer never push. They hand commits to Lead.</p></header>
+      <ol class="steps compact">
+        <li><div><h3>Check the remote branch</h3><div class="command"><pre><code>git remote get-url origin
+branch=$(git branch --show-current)</code></pre></div></div></li>
+        <li><div><h3>Find open pull requests</h3><div class="command"><pre><code>gh search prs --head "$branch" --state open \
+  --json repository,number,url</code></pre></div><p>Verify that a result uses the exact remote repository and branch.</p></div></li>
+        <li><div><h3>Check repository visibility</h3><div class="command"><pre><code>gh pr view URL --json headRefName,headRepository,state,url
+gh repo view OWNER/REPOSITORY --json visibility</code></pre></div></div></li>
+        <li><div><h3>Ask before a public update</h3><p>If the matching pull request repository is public, Lead shows its URL and asks the user for permission. Permission applies to one push only.</p></div></li>
       </ol>
     </section>
 

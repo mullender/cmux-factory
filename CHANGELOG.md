@@ -2,6 +2,14 @@
 
 This file records user-visible changes to cmux-factory.
 
+## [0.4.0.2] - 2026-08-09
+
+### Changed
+
+- Let only Lead push code. Builder and Reviewer must hand off commits.
+- Require one-push user permission when Lead will update an open pull request
+  in a public repository.
+
 ## [0.4.0.1] - 2026-08-09
 
 ### Fixed

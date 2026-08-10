@@ -240,8 +240,8 @@ class FactoryTests(unittest.TestCase):
             self.assertIn("send mail only to the Lead", prompt)
             self.assertIn("factory mail builder lead", prompt)
             self.assertIn("Every turn must end with a handoff", prompt)
-            self.assertIn("open cross-repository pull request", prompt)
-            self.assertIn("explicit user approval", prompt)
+            self.assertIn("Never push code", prompt)
+            self.assertIn("Only the Lead can push", prompt)
 
     def test_reviewer_prompt_separates_current_findings_from_follow_up_work(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -254,6 +254,8 @@ class FactoryTests(unittest.TestCase):
             self.assertIn("Do not use them to block the current change", prompt)
             self.assertIn("FOLLOW-UP OPPORTUNITIES — NOT PART OF THIS CHANGE", prompt)
             self.assertIn("does not change the current verdict", prompt)
+            self.assertIn("Never push code", prompt)
+            self.assertIn("Only the Lead can push", prompt)
 
     def test_lead_prompt_can_message_workers(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -267,8 +269,9 @@ class FactoryTests(unittest.TestCase):
             self.assertIn("--base BASE_SHA --head HEAD_SHA", prompt)
             self.assertIn("Never poll or wait for mail", prompt)
             self.assertNotIn("Every turn must end with a handoff", prompt)
-            self.assertIn("open cross-repository pull request", prompt)
-            self.assertIn("do not push without explicit approval", prompt)
+            self.assertIn("only agent that can push code", prompt)
+            self.assertIn("open pull request in a public", prompt)
+            self.assertIn("Permission applies to one push only", prompt)
 
     def test_cmux_parses_json_and_rejects_invalid_output(self) -> None:
         completed = subprocess.CompletedProcess(["cmux"], 0, stdout='{"ok": true}\n', stderr="")

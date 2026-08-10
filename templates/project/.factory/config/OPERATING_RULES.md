@@ -16,9 +16,10 @@
 - A code assignment and its handoff must name the full base and head commits.
 - Keep a worker worktree clean before a code handoff. Do not review live files.
 - The superproject commit fixes each submodule commit. Keep all submodules clean.
-- Before `git push`, check whether the exact remote repository and branch are
-  the head of an open cross-repository pull request. If they are, do not push
-  unless the user explicitly approves updating that pull request.
+- Only the Lead can push code. Builder and Reviewer must never push.
+- Before the Lead pushes a branch that is the head of an open pull request in
+  a public repository, the Lead must show the pull request URL and ask the user
+  for permission. Permission applies to one push only.
 - Do not claim completion without validation evidence.
 - Only the Builder can change project source in this proof of concept.
 - The Reviewer stays independent and read-only.
