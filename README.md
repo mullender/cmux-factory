@@ -26,15 +26,21 @@ observation loop works in real use.
 
 ## Monitoring and mail
 
-The Watchdog monitors agents. It uses the structured `cmux events` stream first
-and can use a targeted `read-screen` when an event lacks enough detail. The
-Lead does not poll worker terminals.
+The Watchdog monitors agents. It uses the structured `cmux events` stream and
+the cmux agent lifecycle records. The Lead does not poll worker terminals.
 
 Agents exchange files under `.factory/inbox/<recipient>/`. Agents do not poll or
-wait for mail. The Watchdog counts unread mail every two seconds. If an agent is
-idle and its inbox is not empty, the Watchdog sends one short wake-up turn. It
-does not interrupt a working agent. It retries after 30 seconds if the agent
-becomes idle without clearing the inbox.
+wait for mail. The Watchdog counts unread mail every two seconds. If cmux says
+that an agent is idle, the Watchdog sends one short wake-up turn. It can also
+use an idle factory state when cmux has no lifecycle record. It does not
+interrupt a working agent.
+
+A lifecycle hook can be lost. In that case, an agent can be idle while its
+record still says `working` or `running`. If unread mail waits for 30 seconds,
+the Watchdog reads only that agent's last 30 screen lines. It sends input only
+after the same normal Codex or Claude prompt stays unchanged across two reads.
+It does not send input to an active screen or a permission prompt. This screen
+check is a recovery path, not the normal monitor path.
 
 Every non-Lead turn must send mail to the Lead before cmux emits its Stop hook.
 The Watchdog logs each Stop event and whether that turn sent a handoff. If it did
@@ -47,8 +53,19 @@ DECIDE  builder    wake worker because Stop had no Lead handoff
 ```
 
 `factory status` shows the current unread count for each agent. The Watchdog
-journal records count changes, each wake-up decision, each action, and its
-result. It also records an inbox count summary every 60 seconds.
+journal records the inbox count, factory state, cmux lifecycle, screen checks,
+wake-up decisions, actions, and results. It records `inbox collected; unread=0`
+after the agent reads its mail. It also records an inbox count summary every 60
+seconds.
+
+```text
+OBSERVE builder    inbox unread=1 factory=working cmux=running
+ACT     builder    read screen because inbox waited 30s while cmux lifecycle is running
+DECIDE  builder    confirm the idle prompt on the next screen check
+DECIDE  builder    wake agent because inbox unread=1; idle prompt stayed unchanged for 6s
+RESULT  builder    wake-up sent; agent state is working
+RESULT  builder    inbox collected; unread=0
+```
 
 Urgent mail still has a direct path. It pings an idle recipient at once. If the
 recipient is working, cmux shows a notification and does not type into the

@@ -2,6 +2,21 @@
 
 This file records user-visible changes to cmux-factory.
 
+## [0.4.0.3] - 2026-08-10
+
+### Fixed
+
+- Recover when an agent is idle but a lost lifecycle hook leaves its state as
+  working.
+
+### Changed
+
+- Read cmux lifecycle data before the Watchdog sends an inbox wake-up.
+- Use a targeted screen read only after mail waits on a stale state.
+- Require the same idle prompt on two reads, and leave active and permission
+  screens unchanged.
+- Log the observed states, fallback checks, wake result, and cleared inbox.
+
 ## [0.4.0.2] - 2026-08-09
 
 ### Changed

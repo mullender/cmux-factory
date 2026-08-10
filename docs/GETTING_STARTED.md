@@ -83,10 +83,11 @@ Run factory doctor --project, then run factory start. You are the Lead.
 
 ## Use the inbox
 
-The Watchdog monitors agents and counts each inbox every two seconds. If an
-agent is idle and has unread mail, the Watchdog wakes it. The Lead does not poll
-worker terminals. Agents do not poll or wait for mail. When the Watchdog wakes
-an agent, that agent reads and archives its inbox once:
+The Watchdog monitors agents and counts each inbox every two seconds. If cmux
+says that an agent is idle and has unread mail, the Watchdog wakes it. It can
+also use the factory idle state when cmux has no lifecycle record. The Lead does
+not poll worker terminals. Agents do not poll or wait for mail. When the
+Watchdog wakes an agent, that agent reads and archives its inbox once:
 
 ```sh
 factory inbox lead --archive
@@ -103,7 +104,10 @@ can send mail to a non-Lead agent. Workers cannot message each other. The
 command rejects mail that breaks this rule.
 
 Normal mail wakes an idle recipient through the Watchdog. It does not interrupt
-a working agent. Urgent mail pings an idle recipient at once. If the recipient
+a working agent. If a lifecycle hook is lost, the Watchdog waits 30 seconds. It
+then checks only the target screen. It requires the same normal prompt on two
+reads before it wakes the agent. It does not type into an active screen or a
+permission prompt. Urgent mail pings an idle recipient at once. If the recipient
 is working, cmux shows a notification instead. The Watchdog writes permission
 requests and closed-tab details to the Lead inbox.
 
@@ -112,7 +116,9 @@ Watchdog logs each cmux Stop hook. If a worker stops without a handoff, it sends
 one reminder. If the reminder also fails, it alerts the Lead.
 
 Use `factory status` to see each inbox count. Use `factory events --follow` to
-see the Watchdog observation, decision, action, and result.
+see each Watchdog observation, decision, action, and result. The event output
+shows the factory state, cmux lifecycle, any fallback screen check, each wake,
+and when the agent clears its inbox.
 
 Each Stop record includes the cmux event ID, agent state, handoff state, and
 reminder count. This evidence will show whether the cmux Stop hook is reliable

@@ -152,6 +152,7 @@ factory inbox lead --archive</code></pre></div></article>
   --base BASE_SHA --head HEAD_SHA</code></pre></div></article>
       </div>
       <aside class="callout"><strong>Lead-centered mail.</strong> Agents never poll for mail. The Watchdog counts each inbox and wakes an idle recipient. Each worker turn must mail the Lead before it stops. A missing handoff gets one reminder, then a Lead alert. <code>factory status</code> shows each unread count.</aside>
+      <aside class="callout"><strong>Stale-state recovery.</strong> The Watchdog uses cmux lifecycle data first. If unread mail waits for 30 seconds while the agent still appears to run, it reads only that agent's screen. It wakes the agent only when the same normal prompt stays unchanged on two reads. It does not type into an active screen or a permission prompt. The event log shows each observation, screen check, decision, action, and result.</aside>
       <aside class="callout warning"><strong>POC limit.</strong> The watchdog reports a closed agent. It does not restart the agent.</aside>
     </section>
 

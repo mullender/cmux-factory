@@ -24,7 +24,7 @@ from typing import Any, Callable
 
 SOURCE_ROOT = Path(__file__).resolve().parent
 TEMPLATE_ROOT = SOURCE_ROOT / "templates" / "project" / ".factory"
-VERSION = "0.4.0.1"
+VERSION = "0.4.0.3"
 TEMPLATE_STATE_FORMAT = 1
 MANAGED_TEMPLATE_PATTERNS = (
     "config/*.md",
@@ -36,8 +36,30 @@ STOP_CMUX_TIMEOUT_SECONDS = 2.0
 WATCHDOG_INBOX_SCAN_SECONDS = 2.0
 WATCHDOG_INBOX_REPORT_SECONDS = 60.0
 WATCHDOG_WAKE_RETRY_SECONDS = 30.0
+WATCHDOG_LIFECYCLE_STALE_SECONDS = 30.0
+WATCHDOG_SCREEN_POLL_SECONDS = 5.0
+WATCHDOG_SCREEN_CONFIRM_SECONDS = 5.0
+WATCHDOG_SCREEN_RETRY_SECONDS = 30.0
+WATCHDOG_CMUX_TIMEOUT_SECONDS = 2.0
 STOP_EVENT_DEDUP_SECONDS = 1.0
 IDLE_AGENT_STATES = {"ready", "idle", "done"}
+CMUX_AGENT_LIFECYCLES = {"running", "idle", "needsInput", "unknown"}
+SCREEN_PERMISSION_MARKERS = (
+    "do you want to proceed?",
+    "allow this command?",
+    "would you like to run",
+    "would you like to make",
+    "allow codex to",
+    "yes, allow once",
+    "don't ask again",
+    "waiting for permission",
+    "permission required",
+)
+SCREEN_ACTIVE_MARKERS = (
+    "esc to interrupt",
+    "ctrl+c to interrupt",
+)
+SCREEN_IDLE_PROMPT = re.compile(r"(?m)^[ \t]*(?:❯|›)(?:[ \t\u00a0]|$)")
 
 
 class FactoryError(RuntimeError):
@@ -423,6 +445,74 @@ def find_value(value: Any, names: set[str]) -> str | None:
             if found:
                 return found
     return None
+
+
+def cmux_agent_lifecycle(surface_id: str, session_dir: Path | None = None) -> dict[str, Any]:
+    directory = session_dir or Path.home() / ".cmuxterm"
+    unknown = {"state": "unknown", "session_id": None, "updated_at": None}
+    if not directory.is_dir():
+        return unknown
+    for path in sorted(directory.glob("*-hook-sessions.json")):
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        sessions = data.get("sessions", {})
+        if not isinstance(sessions, dict):
+            continue
+        active_sessions = data.get("activeSessionsBySurface")
+        active = active_sessions.get(surface_id) if isinstance(active_sessions, dict) else None
+        session_id = active.get("sessionId") if isinstance(active, dict) else None
+        if not isinstance(session_id, str):
+            matches = [
+                (candidate_id, candidate)
+                for candidate_id, candidate in sessions.items()
+                if isinstance(candidate, dict) and candidate.get("surfaceId") == surface_id
+            ]
+            if matches:
+                session_id, _ = max(
+                    matches,
+                    key=lambda item: item[1].get("updatedAt", 0)
+                    if isinstance(item[1].get("updatedAt"), (int, float))
+                    else 0,
+                )
+        session = sessions.get(session_id) if isinstance(session_id, str) else None
+        if not isinstance(session_id, str) or not isinstance(session, dict):
+            return unknown
+        state = session.get("agentLifecycle")
+        if state not in CMUX_AGENT_LIFECYCLES:
+            state = "unknown"
+        return {
+            "state": state,
+            "session_id": session_id,
+            "updated_at": session.get("updatedAt"),
+        }
+    return unknown
+
+
+def read_agent_screen(workspace_id: str, surface_id: str) -> str:
+    screen = cmux(
+        "read-screen",
+        "--workspace", workspace_id,
+        "--surface", surface_id,
+        "--lines", "30",
+        timeout=WATCHDOG_CMUX_TIMEOUT_SECONDS,
+    )
+    return find_value(screen, {"text"}) or ""
+
+
+def classify_agent_screen(text: str) -> str:
+    tail = "\n".join(text.splitlines()[-20:])
+    lowered = tail.lower()
+    if any(marker in lowered for marker in SCREEN_PERMISSION_MARKERS):
+        return "needs-input"
+    if any(marker in lowered for marker in SCREEN_ACTIVE_MARKERS):
+        return "active"
+    if SCREEN_IDLE_PROMPT.search(tail):
+        return "idle"
+    return "active"
 
 
 def runtime_dir(root: Path) -> Path:
@@ -1361,7 +1451,13 @@ def write_mail(
     return path
 
 
-def wake_recipient(root: Path, recipient: str, *, urgent: bool = False) -> str:
+def wake_recipient(
+    root: Path,
+    recipient: str,
+    *,
+    urgent: bool = False,
+    force: bool = False,
+) -> str:
     registry, _ = with_registry(root)
     if not registry.get("active"):
         return "stored"
@@ -1370,7 +1466,9 @@ def wake_recipient(root: Path, recipient: str, *, urgent: bool = False) -> str:
     if not isinstance(agent, dict) or not isinstance(workspace_id, str):
         return "stored"
     surface_id = agent.get("surface_id")
-    if not isinstance(surface_id, str) or agent.get("state") not in IDLE_AGENT_STATES:
+    if not isinstance(surface_id, str):
+        return "stored"
+    if not force and agent.get("state") not in IDLE_AGENT_STATES:
         return "stored"
 
     count = len(unread_mail(root, recipient))
@@ -1407,10 +1505,12 @@ def ping_recipient(root: Path, recipient: str, *, urgent: bool) -> str:
     if not isinstance(surface_id, str):
         return "stored"
 
-    if urgent and agent.get("state") in IDLE_AGENT_STATES:
-        return wake_recipient(root, recipient, urgent=True)
-
     if urgent:
+        lifecycle = cmux_agent_lifecycle(surface_id)
+        if lifecycle["state"] == "idle":
+            return wake_recipient(root, recipient, urgent=True, force=True)
+        if lifecycle["state"] == "unknown" and agent.get("state") in IDLE_AGENT_STATES:
+            return wake_recipient(root, recipient, urgent=True)
         cmux(
             "notify",
             "--title", f"cmux-factory mail for {recipient}",
@@ -1426,30 +1526,125 @@ def monitor_inboxes(
     root: Path,
     previous_counts: dict[str, int],
     wake_attempts: dict[str, float],
+    pending_since: dict[str, float] | None = None,
+    screen_observations: dict[str, dict[str, Any]] | None = None,
     *,
     now: float | None = None,
 ) -> dict[str, int]:
     registry, _ = with_registry(root)
     checked_at = time.monotonic() if now is None else now
+    pending_since = pending_since if pending_since is not None else {}
+    screen_observations = screen_observations if screen_observations is not None else {}
     counts: dict[str, int] = {}
     for name, agent in registry.get("agents", {}).items():
         if not isinstance(agent, dict):
             continue
         count = len(unread_mail(root, name))
         counts[name] = count
-        if previous_counts.get(name) != count:
-            journal(root, "OBSERVE", f"inbox unread={count}", agent=name)
-        if count == 0 or agent.get("state") not in IDLE_AGENT_STATES:
+        previous_count = previous_counts.get(name)
+        if count == 0:
+            if previous_count:
+                journal(root, "RESULT", "inbox collected; unread=0", agent=name)
+            pending_since.pop(name, None)
+            wake_attempts.pop(name, None)
+            screen_observations.pop(name, None)
             continue
+
+        if previous_count != count:
+            pending_since[name] = checked_at
+            wake_attempts.pop(name, None)
+            screen_observations.pop(name, None)
+        first_seen = pending_since.setdefault(name, checked_at)
+        pending_age = checked_at - first_seen
+        state = str(agent.get("state") or "unknown")
+        surface_id = agent.get("surface_id")
+        workspace_id = registry.get("workspace_id")
+        lifecycle = (
+            cmux_agent_lifecycle(surface_id)
+            if isinstance(surface_id, str)
+            else {"state": "unknown", "session_id": None, "updated_at": None}
+        )
+        lifecycle_state = str(lifecycle["state"])
+        if previous_count != count:
+            journal(
+                root,
+                "OBSERVE",
+                f"inbox unread={count} factory={state} cmux={lifecycle_state}",
+                agent=name,
+            )
+
+        wake_reason: str | None = None
+        if lifecycle_state == "idle":
+            wake_reason = "cmux lifecycle is idle"
+        elif state in IDLE_AGENT_STATES and lifecycle_state == "unknown":
+            wake_reason = f"factory state is {state} and cmux lifecycle is unknown"
+        else:
+            stale = lifecycle_state == "unknown" or pending_age >= WATCHDOG_LIFECYCLE_STALE_SECONDS
+            if not stale or not isinstance(workspace_id, str) or not isinstance(surface_id, str):
+                if previous_count != count:
+                    journal(
+                        root,
+                        "DECIDE",
+                        f"wait because cmux lifecycle is {lifecycle_state}",
+                        agent=name,
+                    )
+                continue
+            observation = screen_observations.get(name, {})
+            next_screen_check = observation.get("next_check_at")
+            if isinstance(next_screen_check, (int, float)) and checked_at < next_screen_check:
+                continue
+            journal(
+                root,
+                "ACT",
+                (
+                    f"read screen because inbox waited {pending_age:g}s while "
+                    f"cmux lifecycle is {lifecycle_state}"
+                ),
+                agent=name,
+            )
+            try:
+                screen_text = read_agent_screen(workspace_id, surface_id)
+            except FactoryError as exc:
+                journal(root, "RESULT", f"screen read failed: {exc}", agent=name)
+                screen_observations[name] = {
+                    "checked_at": checked_at,
+                    "next_check_at": checked_at + WATCHDOG_SCREEN_RETRY_SECONDS,
+                }
+                continue
+            screen_state = classify_agent_screen(screen_text)
+            fingerprint = hashlib.sha256(screen_text.encode()).hexdigest()
+            same_screen = observation.get("fingerprint") == fingerprint
+            stable_since = observation.get("stable_since") if same_screen else checked_at
+            if not isinstance(stable_since, (int, float)):
+                stable_since = checked_at
+            screen_observations[name] = {
+                "checked_at": checked_at,
+                "fingerprint": fingerprint,
+                "stable_since": stable_since,
+                "state": screen_state,
+                "next_check_at": checked_at + WATCHDOG_SCREEN_RETRY_SECONDS,
+            }
+            if screen_state == "needs-input":
+                journal(root, "DECIDE", "do not wake because the screen needs user input", agent=name)
+                continue
+            if screen_state != "idle":
+                journal(root, "DECIDE", "wait because the agent screen is active", agent=name)
+                continue
+            stable_for = checked_at - stable_since
+            if stable_for < WATCHDOG_SCREEN_CONFIRM_SECONDS:
+                screen_observations[name]["next_check_at"] = checked_at + WATCHDOG_SCREEN_POLL_SECONDS
+                journal(root, "DECIDE", "confirm the idle prompt on the next screen check", agent=name)
+                continue
+            wake_reason = f"idle prompt stayed unchanged for {stable_for:g}s"
+
         last_attempt = wake_attempts.get(name)
         if last_attempt is not None and checked_at - last_attempt < WATCHDOG_WAKE_RETRY_SECONDS:
             continue
         wake_attempts[name] = checked_at
-        state = str(agent.get("state") or "unknown")
-        journal(root, "DECIDE", f"wake agent because inbox unread={count} and state={state}", agent=name)
+        journal(root, "DECIDE", f"wake agent because inbox unread={count}; {wake_reason}", agent=name)
         journal(root, "ACT", "send one inbox wake-up turn", agent=name)
         try:
-            action = wake_recipient(root, name)
+            action = wake_recipient(root, name, force=state not in IDLE_AGENT_STATES)
         except FactoryError as exc:
             journal(root, "RESULT", f"wake-up failed: {exc}", agent=name)
             continue
@@ -1660,6 +1855,8 @@ def command_watch(args: argparse.Namespace) -> int:
     pending = b""
     counts: dict[str, int] = {}
     wake_attempts: dict[str, float] = {}
+    pending_since: dict[str, float] = {}
+    screen_observations: dict[str, dict[str, Any]] = {}
     next_scan = 0.0
     next_report = time.monotonic() + WATCHDOG_INBOX_REPORT_SECONDS
     try:
@@ -1667,7 +1864,14 @@ def command_watch(args: argparse.Namespace) -> int:
         while running:
             current = time.monotonic()
             if current >= next_scan:
-                counts = monitor_inboxes(root, counts, wake_attempts, now=current)
+                counts = monitor_inboxes(
+                    root,
+                    counts,
+                    wake_attempts,
+                    pending_since,
+                    screen_observations,
+                    now=current,
+                )
                 next_scan = current + WATCHDOG_INBOX_SCAN_SECONDS
                 if current >= next_report:
                     summary = ", ".join(f"{name}={count}" for name, count in sorted(counts.items()))
