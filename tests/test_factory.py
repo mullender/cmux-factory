@@ -294,6 +294,70 @@ class FactoryTests(unittest.TestCase):
         self.assertEqual(factory.find_value(receipt, {"id"}), "SURFACE")
         self.assertIsNone(factory.find_value(receipt, {"missing"}))
 
+    def test_cmux_agent_lifecycle_reads_active_and_session_only_records(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            session_dir = Path(directory)
+            data = {
+                "activeSessionsBySurface": {
+                    "CLAUDE-SURFACE": {"sessionId": "CLAUDE-SESSION"},
+                },
+                "sessions": {
+                    "CLAUDE-SESSION": {
+                        "agentLifecycle": "idle",
+                        "surfaceId": "CLAUDE-SURFACE",
+                        "updatedAt": 10,
+                    },
+                    "CODEX-SESSION": {
+                        "agentLifecycle": "running",
+                        "surfaceId": "CODEX-SURFACE",
+                        "updatedAt": 20,
+                    },
+                },
+            }
+            (session_dir / "agent-hook-sessions.json").write_text(json.dumps(data))
+
+            claude = factory.cmux_agent_lifecycle("CLAUDE-SURFACE", session_dir)
+            codex = factory.cmux_agent_lifecycle("CODEX-SURFACE", session_dir)
+
+            self.assertEqual(claude["state"], "idle")
+            self.assertEqual(claude["session_id"], "CLAUDE-SESSION")
+            self.assertEqual(codex["state"], "running")
+            self.assertEqual(codex["session_id"], "CODEX-SESSION")
+
+    def test_cmux_agent_lifecycle_ignores_invalid_records(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            session_dir = Path(directory)
+            (session_dir / "broken-hook-sessions.json").write_text("not json")
+
+            lifecycle = factory.cmux_agent_lifecycle("SURFACE", session_dir)
+
+            self.assertEqual(lifecycle["state"], "unknown")
+
+    def test_screen_classifier_finds_idle_active_and_permission_states(self) -> None:
+        self.assertEqual(factory.classify_agent_screen("Ready\n❯ "), "idle")
+        self.assertEqual(factory.classify_agent_screen("Ready\n› Use /skills"), "idle")
+        self.assertEqual(
+            factory.classify_agent_screen("› old prompt\nWorking\nesc to interrupt"),
+            "active",
+        )
+        self.assertEqual(
+            factory.classify_agent_screen("› old prompt\nWould you like to run this command?"),
+            "needs-input",
+        )
+
+    def test_watchdog_screen_read_has_a_short_timeout(self) -> None:
+        with mock.patch.object(factory, "cmux", return_value={"text": "Ready\n❯ "}) as cmux:
+            text = factory.read_agent_screen("WORKSPACE", "SURFACE")
+
+        self.assertEqual(text, "Ready\n❯ ")
+        cmux.assert_called_once_with(
+            "read-screen",
+            "--workspace", "WORKSPACE",
+            "--surface", "SURFACE",
+            "--lines", "30",
+            timeout=factory.WATCHDOG_CMUX_TIMEOUT_SECONDS,
+        )
+
     def test_send_turn_waits_for_queued_text_before_enter(self) -> None:
         calls: list[tuple[str, ...]] = []
 
@@ -842,10 +906,17 @@ class FactoryTests(unittest.TestCase):
             factory.write_mail(root, "lead", "builder", "message", "Please run the focused test.")
             turns: list[tuple[str, str, str]] = []
 
-            with mock.patch.object(
-                factory,
-                "send_turn",
-                side_effect=lambda workspace, surface, text: turns.append((workspace, surface, text)),
+            with (
+                mock.patch.object(
+                    factory,
+                    "send_turn",
+                    side_effect=lambda workspace, surface, text: turns.append((workspace, surface, text)),
+                ),
+                mock.patch.object(
+                    factory,
+                    "cmux_agent_lifecycle",
+                    return_value={"state": "idle", "session_id": "SESSION", "updated_at": 1},
+                ),
             ):
                 counts = factory.monitor_inboxes(root, {}, {}, now=100.0)
 
@@ -869,11 +940,140 @@ class FactoryTests(unittest.TestCase):
             factory.set_agent_state(root, "builder", "working", "implementing the task")
             factory.write_mail(root, "lead", "builder", "message", "Use the smaller fixture.")
 
-            with mock.patch.object(factory, "send_turn") as send_turn:
+            with (
+                mock.patch.object(factory, "send_turn") as send_turn,
+                mock.patch.object(
+                    factory,
+                    "cmux_agent_lifecycle",
+                    return_value={"state": "running", "session_id": "SESSION", "updated_at": 1},
+                ),
+                mock.patch.object(factory, "read_agent_screen") as read_screen,
+            ):
                 counts = factory.monitor_inboxes(root, {}, {}, now=100.0)
 
             self.assertEqual(counts["builder"], 1)
             send_turn.assert_not_called()
+            read_screen.assert_not_called()
+
+    def test_watchdog_recovers_a_stale_working_agent_at_a_stable_idle_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.init_project(root)
+            self.register_factory(root)
+            factory.set_agent_state(root, "builder", "working", "stale hook state")
+            factory.write_mail(root, "lead", "builder", "message", "Run the focused test.")
+            pending_since = {"builder": 60.0}
+            screen_observations: dict[str, dict[str, object]] = {}
+            wake_attempts: dict[str, float] = {}
+            turns: list[str] = []
+            lifecycle = {"state": "running", "session_id": "SESSION", "updated_at": 1}
+
+            with (
+                mock.patch.object(factory, "cmux_agent_lifecycle", return_value=lifecycle),
+                mock.patch.object(factory, "read_agent_screen", return_value="Ready\n❯ "),
+                mock.patch.object(
+                    factory,
+                    "send_turn",
+                    side_effect=lambda _workspace, _surface, text: turns.append(text),
+                ),
+            ):
+                counts = factory.monitor_inboxes(
+                    root,
+                    {"builder": 1},
+                    wake_attempts,
+                    pending_since,
+                    screen_observations,
+                    now=100.0,
+                )
+                self.assertEqual(turns, [])
+                factory.monitor_inboxes(
+                    root,
+                    counts,
+                    wake_attempts,
+                    pending_since,
+                    screen_observations,
+                    now=106.0,
+                )
+
+            self.assertEqual(len(turns), 1)
+            self.assertIn("1 unread message", turns[0])
+            journal = (root / ".factory/run/watchdog.jsonl").read_text()
+            self.assertIn("confirm the idle prompt", journal)
+            self.assertIn("idle prompt stayed unchanged for 6s", journal)
+
+    def test_watchdog_does_not_wake_a_stale_agent_with_an_active_screen(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.init_project(root)
+            self.register_factory(root)
+            factory.set_agent_state(root, "builder", "working", "running a command")
+            factory.write_mail(root, "lead", "builder", "message", "Use the smaller fixture.")
+            lifecycle = {"state": "running", "session_id": "SESSION", "updated_at": 1}
+
+            with (
+                mock.patch.object(factory, "cmux_agent_lifecycle", return_value=lifecycle),
+                mock.patch.object(
+                    factory,
+                    "read_agent_screen",
+                    return_value="Building\nesc to interrupt\n› old prompt",
+                ),
+                mock.patch.object(factory, "send_turn") as send_turn,
+            ):
+                factory.monitor_inboxes(
+                    root,
+                    {"builder": 1},
+                    {},
+                    {"builder": 60.0},
+                    {},
+                    now=100.0,
+                )
+
+            send_turn.assert_not_called()
+            journal = (root / ".factory/run/watchdog.jsonl").read_text()
+            self.assertIn("wait because the agent screen is active", journal)
+
+    def test_watchdog_does_not_wake_an_agent_at_a_permission_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.init_project(root)
+            self.register_factory(root)
+            factory.set_agent_state(root, "builder", "working", "waiting for permission")
+            factory.write_mail(root, "lead", "builder", "message", "Use the smaller fixture.")
+            lifecycle = {"state": "needsInput", "session_id": "SESSION", "updated_at": 1}
+
+            with (
+                mock.patch.object(factory, "cmux_agent_lifecycle", return_value=lifecycle),
+                mock.patch.object(
+                    factory,
+                    "read_agent_screen",
+                    return_value="Would you like to run this command?\n❯ old prompt",
+                ),
+                mock.patch.object(factory, "send_turn") as send_turn,
+            ):
+                factory.monitor_inboxes(
+                    root,
+                    {"builder": 1},
+                    {},
+                    {"builder": 100.0},
+                    {},
+                    now=131.0,
+                )
+
+            send_turn.assert_not_called()
+            journal = (root / ".factory/run/watchdog.jsonl").read_text()
+            self.assertIn("do not wake because the screen needs user input", journal)
+
+    def test_watchdog_logs_when_an_agent_clears_its_inbox(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.init_project(root)
+            self.register_factory(root)
+
+            counts = factory.monitor_inboxes(root, {"builder": 1}, {}, now=100.0)
+
+            self.assertEqual(counts["builder"], 0)
+            journal = (root / ".factory/run/watchdog.jsonl").read_text()
+            self.assertIn("inbox collected; unread=0", journal)
 
     def test_status_includes_each_agent_inbox_volume(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
