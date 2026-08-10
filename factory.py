@@ -24,14 +24,14 @@ from typing import Any, Callable
 
 SOURCE_ROOT = Path(__file__).resolve().parent
 TEMPLATE_ROOT = SOURCE_ROOT / "templates" / "project" / ".factory"
-VERSION = "0.3.3.0"
+VERSION = "0.4.0.0"
 TEMPLATE_STATE_FORMAT = 1
 MANAGED_TEMPLATE_PATTERNS = (
     "config/*.md",
     "roles/*.md",
     "agents/*/IDENTITY.md",
 )
-RUNTIME_IGNORE_ENTRIES = ("run/", "inbox/", "update/", "agents/*/STATUS.json")
+RUNTIME_IGNORE_ENTRIES = ("run/", "inbox/", "update/", "worktrees/", "agents/*/STATUS.json")
 STOP_CMUX_TIMEOUT_SECONDS = 2.0
 WATCHDOG_INBOX_SCAN_SECONDS = 2.0
 WATCHDOG_INBOX_REPORT_SECONDS = 60.0
@@ -66,7 +66,8 @@ def find_project_root(start: Path) -> Path:
 
 
 def project_root(value: str | None) -> Path:
-    return find_project_root(Path(value) if value else Path.cwd())
+    requested = value or os.environ.get("FACTORY_PROJECT_ROOT")
+    return find_project_root(Path(requested) if requested else Path.cwd())
 
 
 def initialization_root(value: str) -> Path:
@@ -205,6 +206,197 @@ def run_text(
         detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
         raise FactoryError(f"command failed: {shlex.join(command)}: {detail}")
     return result
+
+
+def git_text(path: Path, *arguments: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    git = shutil.which("git")
+    if not git:
+        raise FactoryError("git is not on PATH")
+    return run_text([git, "-C", str(path), *arguments], check=check)
+
+
+def git_head(path: Path) -> str:
+    result = git_text(path, "rev-parse", "HEAD")
+    value = result.stdout.strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", value):
+        raise FactoryError(f"git returned an invalid HEAD for {path}: {value!r}")
+    return value
+
+
+def resolve_commit(root: Path, value: str) -> str:
+    result = git_text(root, "rev-parse", "--verify", f"{value}^{{commit}}")
+    commit = result.stdout.strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise FactoryError(f"git returned an invalid commit for {value!r}")
+    return commit
+
+
+def worktree_path(root: Path, name: str) -> Path:
+    return root / ".factory" / "worktrees" / name
+
+
+def registered_worktrees(root: Path) -> set[Path]:
+    result = git_text(root, "worktree", "list", "--porcelain")
+    return {
+        Path(line.removeprefix("worktree ")).resolve()
+        for line in result.stdout.splitlines()
+        if line.startswith("worktree ")
+    }
+
+
+def worktree_changes(path: Path) -> list[str]:
+    result = git_text(
+        path,
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+        "--ignore-submodules=none",
+    )
+    return [line for line in result.stdout.splitlines() if line.strip()]
+
+
+def require_clean_worktree(path: Path, label: str) -> None:
+    changes = worktree_changes(path)
+    if changes:
+        preview = "; ".join(changes[:3])
+        raise FactoryError(f"{label} worktree is not clean: {preview}")
+
+
+def update_submodules(path: Path) -> None:
+    git_text(path, "submodule", "sync", "--recursive")
+    git_text(path, "submodule", "update", "--init", "--recursive", "--checkout")
+
+
+def submodule_manifest(path: Path) -> list[dict[str, str]]:
+    result = git_text(path, "submodule", "status", "--recursive")
+    manifest: list[dict[str, str]] = []
+    for line in result.stdout.splitlines():
+        if not line:
+            continue
+        state = line[0]
+        match = re.match(r"^[ +\-U]([0-9a-f]{40})\s+(.+?)(?:\s+\(.+\))?$", line)
+        if not match:
+            raise FactoryError(f"cannot parse submodule status: {line}")
+        if state != " ":
+            raise FactoryError(f"submodule is not at its recorded commit: {line}")
+        manifest.append({"path": match.group(2), "sha": match.group(1)})
+    return manifest
+
+
+def is_review_agent(agent: dict[str, Any]) -> bool:
+    role = agent.get("role")
+    return isinstance(role, str) and Path(role).stem == "reviewer"
+
+
+def ensure_agent_worktree(root: Path, name: str, agent: dict[str, Any]) -> Path:
+    path = worktree_path(root, name).resolve()
+    registered = registered_worktrees(root)
+    if path in registered:
+        require_clean_worktree(path, name)
+        update_submodules(path)
+        require_clean_worktree(path, name)
+        return path
+    if path.exists():
+        raise FactoryError(f"worktree path exists but Git does not manage it: {path}")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if is_review_agent(agent):
+        git_text(root, "worktree", "add", "--detach", str(path), "HEAD")
+    else:
+        branch = f"factory/{name}"
+        exists = git_text(root, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}", check=False)
+        if exists.returncode == 0:
+            git_text(root, "worktree", "add", str(path), branch)
+        else:
+            git_text(root, "worktree", "add", "-b", branch, str(path), "HEAD")
+    update_submodules(path)
+    require_clean_worktree(path, name)
+    return path
+
+
+def is_ancestor(root: Path, base: str, head: str) -> bool:
+    result = git_text(root, "merge-base", "--is-ancestor", base, head, check=False)
+    if result.returncode not in {0, 1}:
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        raise FactoryError(f"cannot compare commits {base} and {head}: {detail}")
+    return result.returncode == 0
+
+
+def agent_source_path(root: Path, name: str, registry: dict[str, Any]) -> Path:
+    agent = registry.get("agents", {}).get(name)
+    if isinstance(agent, dict) and isinstance(agent.get("worktree"), str):
+        return Path(agent["worktree"])
+    return root
+
+
+def prepare_assignment(
+    root: Path,
+    name: str,
+    agent: dict[str, Any],
+    registry: dict[str, Any],
+    base: str,
+    head: str | None,
+) -> dict[str, Any]:
+    registered = registry.get("agents", {}).get(name)
+    if not isinstance(registered, dict):
+        raise FactoryError(f"agent is not registered: {name}")
+    if registered.get("state") not in IDLE_AGENT_STATES:
+        raise FactoryError(f"{name} is not idle; wait for its turn to stop before assigning work")
+    path = agent_source_path(root, name, registry)
+    require_clean_worktree(path, name)
+
+    metadata: dict[str, Any] = {"base_sha": base}
+    if is_review_agent(agent):
+        if head is None:
+            raise FactoryError("a Reviewer assignment needs --base and --head")
+        if not is_ancestor(root, base, head):
+            raise FactoryError("review base is not an ancestor of review head")
+        git_text(path, "checkout", "--detach", head)
+        update_submodules(path)
+        require_clean_worktree(path, name)
+        if git_head(path) != head:
+            raise FactoryError(f"{name} worktree did not reach requested commit {head}")
+        metadata["head_sha"] = head
+        metadata["submodules"] = submodule_manifest(path)
+    else:
+        if head is not None:
+            raise FactoryError("a Builder assignment uses --base only")
+        if git_head(path) != base:
+            raise FactoryError(
+                f"{name} worktree is at {git_head(path)}, not assignment base {base}; "
+                "align it explicitly before you assign the task"
+            )
+    return metadata
+
+
+def validate_handoff(
+    root: Path,
+    name: str,
+    registry: dict[str, Any],
+    base: str | None,
+    head: str | None,
+) -> dict[str, Any]:
+    registered = registry.get("agents", {}).get(name)
+    if not isinstance(registered, dict):
+        return {}
+    expected_base = registered.get("task_base_sha") or registered.get("review_base_sha")
+    expected_head = registered.get("review_head_sha")
+    if expected_base is None and base is None and head is None:
+        return {}
+    if base is None or head is None:
+        raise FactoryError("this handoff needs --base and --head")
+    if expected_base is not None and base != expected_base:
+        raise FactoryError(f"handoff base {base} does not match assigned base {expected_base}")
+    if expected_head is not None and head != expected_head:
+        raise FactoryError(f"handoff head {head} does not match assigned review head {expected_head}")
+    if not is_ancestor(root, base, head):
+        raise FactoryError("handoff base is not an ancestor of handoff head")
+    path = agent_source_path(root, name, registry)
+    require_clean_worktree(path, name)
+    actual = git_head(path)
+    if actual != head:
+        raise FactoryError(f"{name} worktree is at {actual}, not handoff head {head}")
+    return {"base_sha": base, "head_sha": head, "submodules": submodule_manifest(path)}
 
 
 def cmux(*arguments: str, timeout: float | None = None) -> Any:
@@ -479,7 +671,12 @@ def read_file(root: Path, relative: str) -> str:
         raise FactoryError(f"cannot read {path}: {exc}") from exc
 
 
-def compose_prompt(root: Path, name: str, agent: dict[str, Any]) -> str:
+def compose_prompt(
+    root: Path,
+    name: str,
+    agent: dict[str, Any],
+    source_worktree: Path | None = None,
+) -> str:
     config = load_config(root)
     lead_name = next(agent_name for agent_name, data in config["agents"].items() if data.get("current"))
     label = str(agent.get("label") or name.title())
@@ -490,10 +687,18 @@ def compose_prompt(root: Path, name: str, agent: dict[str, Any]) -> str:
     now = read_file(root, ".factory/brain/NOW.md")
     if name == lead_name:
         mail_rule = (
-            f"You can send mail to any non-Lead agent with `factory mail {name} RECIPIENT \"MESSAGE\"`. "
-            "Non-Lead agents can send mail only to you."
+            "You can send mail to any non-Lead agent. "
+            f"Send a Builder task with `factory mail {name} builder \"TASK\" --kind assignment "
+            "--base BASE_SHA`. Send a review task with `factory mail lead reviewer \"REVIEW GOAL\" "
+            "--kind assignment --base BASE_SHA --head HEAD_SHA`. Non-Lead agents can send mail "
+            "only to you."
         )
         handoff_rule = ""
+        worktree_rule = (
+            "# Git worktrees\n\nYou use the main project worktree. Builder and Reviewer use "
+            "separate worktrees. Use the SHA fields in their mail. Never ask Reviewer to inspect "
+            "Builder's live files."
+        )
     else:
         mail_rule = (
             f"You can send mail only to the Lead with `factory mail {name} {lead_name} \"MESSAGE\"`. "
@@ -502,7 +707,16 @@ def compose_prompt(root: Path, name: str, agent: dict[str, Any]) -> str:
         handoff_rule = (
             " Every turn must end with a handoff to the Lead, even when you made no change. "
             f"Your final action must be `factory mail {name} {lead_name} \"STATUS AND EVIDENCE\" "
-            "--kind handoff`. State whether the work is ready, blocked, or done."
+            "--kind handoff`. For an assigned task, add `--base BASE_SHA --head HEAD_SHA`. "
+            "If unfinished files prevent a clean handoff, use `--kind blocked` instead. "
+            "State whether the work is ready, blocked, or done."
+        )
+        worktree = source_worktree or worktree_path(root, name)
+        worktree_rule = (
+            f"# Git worktree\n\nYour source worktree is `{worktree}`. Edit and run Git only in this "
+            "worktree. Do not edit the main project worktree. Keep this worktree clean before a "
+            "handoff. Builder must commit the change. Reviewer must review only the assigned "
+            "`base_sha..head_sha` range and must not change source."
         )
     return "\n\n".join(
         [
@@ -512,6 +726,7 @@ def compose_prompt(root: Path, name: str, agent: dict[str, Any]) -> str:
             identity,
             role,
             now,
+            worktree_rule,
             (
                 "# Check-in\n\n"
                 f"Run `factory check-in {name} working \"SHORT SUMMARY\"` when work starts. "
@@ -816,6 +1031,8 @@ def command_doctor(args: argparse.Namespace) -> int:
 
     ok, _ = doctor_check("project config", lambda: f"{load_config(root)['name']} (version 1)")
     results.append(ok)
+    ok, _ = doctor_check("Git project", lambda: f"HEAD {git_head(root)[:12]}")
+    results.append(ok)
     if ok:
         config = load_config(root)
         for name, agent in config["agents"].items():
@@ -868,6 +1085,11 @@ def command_start(args: argparse.Namespace) -> int:
             return command_status(argparse.Namespace(project=str(root), json=False))
         raise FactoryError("factory is active in another workspace; run factory stop first")
 
+    worktrees: dict[str, Path] = {}
+    for name, agent in config["agents"].items():
+        if not agent.get("current"):
+            worktrees[name] = ensure_agent_worktree(root, name, agent)
+
     agents: dict[str, Any] = {}
     current_name = next(name for name, data in config["agents"].items() if data.get("current"))
     current_agent = config["agents"][current_name]
@@ -880,6 +1102,8 @@ def command_start(args: argparse.Namespace) -> int:
         "state": "working",
         "reason": "current session registered as Lead",
         "current": True,
+        "worktree": str(root),
+        "worktree_head": git_head(root),
         "updated_at": utc_now(),
     }
 
@@ -896,6 +1120,9 @@ def command_start(args: argparse.Namespace) -> int:
             "state": "starting",
             "reason": "surface created",
             "current": False,
+            "worktree": str(worktrees[name]),
+            "worktree_head": git_head(worktrees[name]),
+            "worktree_mode": "review" if is_review_agent(agent) else "build",
             "updated_at": utc_now(),
         }
 
@@ -918,9 +1145,10 @@ def command_start(args: argparse.Namespace) -> int:
     for name, agent in config["agents"].items():
         if agent.get("current"):
             continue
-        prompt = compose_prompt(root, name, agent)
+        prompt = compose_prompt(root, name, agent, worktrees[name])
         command = [prompt if item == "{prompt}" else item for item in agent["command"]]
-        launch = f"cd -- {shlex.quote(str(root))} && {shlex.join(command)}"
+        agent_command = shlex.join(["env", f"FACTORY_PROJECT_ROOT={root}", *command])
+        launch = f"cd -- {shlex.quote(str(worktrees[name]))} && {agent_command}"
         send_turn(workspace_id, agents[name]["surface_id"], launch)
         set_agent_state(root, name, "launched", f"launched {command[0]}")
 
@@ -937,7 +1165,10 @@ def command_start(args: argparse.Namespace) -> int:
     with_registry(root, watchdog_ready)
     print(f"START workspace={workspace_id} pane={pane_id}")
     for name, data in agents.items():
-        print(f"AGENT {name:<10} g{data['generation']} surface={data['surface_id']}")
+        print(
+            f"AGENT {name:<10} g{data['generation']} surface={data['surface_id']} "
+            f"sha={data['worktree_head'][:12]} worktree={data['worktree']}"
+        )
     print(f"WATCH surface={watchdog_surface_id}")
     print("LIMIT watchdog reports failures but does not restart agents")
     return 0
@@ -986,6 +1217,14 @@ def status_data(root: Path) -> dict[str, Any]:
         item = dict(agent)
         item["surface_live"] = item.get("surface_id") in live
         item["inbox_unread"] = len(unread_mail(root, name))
+        source = item.get("worktree")
+        if isinstance(source, str):
+            try:
+                source_path = Path(source)
+                item["worktree_head"] = git_head(source_path)
+                item["worktree_clean"] = not worktree_changes(source_path)
+            except FactoryError as exc:
+                item["worktree_error"] = str(exc)
         result_agents[name] = item
     result["agents"] = result_agents
     return result
@@ -1009,6 +1248,13 @@ def command_status(args: argparse.Namespace) -> int:
             f"{agent.get('inbox_unread', 0):>5}  "
             f"{agent.get('reason', '')}"
         )
+        if agent.get("worktree"):
+            clean = agent.get("worktree_clean")
+            clean_text = "unknown" if clean is None else str(clean).lower()
+            sha = str(agent.get("worktree_head") or "unknown")
+            print(f"  GIT sha={sha[:12]} clean={clean_text} path={agent['worktree']}")
+        if agent.get("worktree_error"):
+            print(f"  GIT ERROR {agent['worktree_error']}")
     record = data.get("last_watchdog_record")
     if isinstance(record, dict):
         print(
@@ -1052,13 +1298,30 @@ def unread_mail(root: Path, recipient: str) -> list[Path]:
     return sorted(path for path in directory.glob("*.md") if path.is_file())
 
 
-def write_mail(root: Path, sender: str, recipient: str, kind: str, message: str) -> Path:
+def write_mail(
+    root: Path,
+    sender: str,
+    recipient: str,
+    kind: str,
+    message: str,
+    metadata: dict[str, Any] | None = None,
+) -> Path:
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     path = inbox_dir(root, recipient) / f"{stamp}.{sender}.md"
-    content = (
-        f"---\nfrom: {sender}\nto: {recipient}\nat: {utc_now()}\nkind: {kind}\n---\n\n"
-        f"{message.strip()}\n"
-    )
+    fields: dict[str, Any] = {
+        "from": sender,
+        "to": recipient,
+        "at": utc_now(),
+        "kind": kind,
+    }
+    try:
+        fields["source_sha"] = git_head(root)
+    except FactoryError:
+        fields["source_sha"] = "unavailable"
+    if metadata:
+        fields.update(metadata)
+    header = "\n".join(f"{key}: {json.dumps(value, sort_keys=True)}" for key, value in fields.items())
+    content = f"---\n{header}\n---\n\n{message.strip()}\n"
     atomic_text(path, content)
     return path
 
@@ -1242,6 +1505,17 @@ def handle_agent_stop(root: Path, name: str, event_id: str | None, *, now: float
         with_registry(root, prepare_reminder)
         journal(root, "DECIDE", "wake worker because Stop had no Lead handoff", agent=name)
         journal(root, "ACT", "send one handoff reminder turn", agent=name)
+        base = agent.get("task_base_sha") or agent.get("review_base_sha")
+        head = agent.get("review_head_sha")
+        refs = ""
+        if isinstance(base, str):
+            if not isinstance(head, str):
+                try:
+                    head = git_head(agent_source_path(root, name, registry))
+                except FactoryError:
+                    head = None
+            if isinstance(head, str):
+                refs = f" --base {base} --head {head}"
         try:
             send_turn(
                 workspace_id,
@@ -1249,7 +1523,8 @@ def handle_agent_stop(root: Path, name: str, event_id: str | None, *, now: float
                 (
                     "Factory handoff required: this non-Lead turn ended without mail to Lead. "
                     f"Send one final handoff now with `factory mail {name} {lead_name} "
-                    '"STATUS AND EVIDENCE" --kind handoff`. Do not continue project work.'
+                    f'"STATUS AND EVIDENCE" --kind handoff{refs}`. If unfinished files prevent a '
+                    "clean handoff, send `--kind blocked` instead. Do not continue project work."
                 ),
             )
         except FactoryError as exc:
@@ -1474,7 +1749,61 @@ def command_mail(args: argparse.Namespace) -> int:
         raise FactoryError("agents cannot send mail to themselves")
     if args.sender != lead_name and args.recipient != lead_name:
         raise FactoryError(f"{args.sender} can send mail only to the Lead ({lead_name})")
-    path = write_mail(root, args.sender, args.recipient, args.kind, args.message)
+
+    base_arg = getattr(args, "base", None)
+    head_arg = getattr(args, "head", None)
+    base = resolve_commit(root, base_arg) if base_arg else None
+    head = resolve_commit(root, head_arg) if head_arg else None
+    metadata: dict[str, Any] = {}
+    source_path = agent_source_path(root, args.sender, registry)
+    try:
+        metadata["source_sha"] = git_head(source_path)
+    except FactoryError:
+        metadata["source_sha"] = "unavailable"
+
+    if args.kind == "assignment":
+        if args.sender != lead_name or args.recipient == lead_name:
+            raise FactoryError("only the Lead can send an assignment to a worker")
+        if not registry.get("active"):
+            raise FactoryError("start the factory before you send an assignment")
+        if base is None:
+            raise FactoryError("an assignment needs --base")
+        assignment = prepare_assignment(
+            root,
+            args.recipient,
+            agents[args.recipient],
+            registry,
+            base,
+            head,
+        )
+        metadata.update(assignment)
+
+        def record_assignment(target: dict[str, Any]) -> None:
+            worker = target.get("agents", {}).get(args.recipient)
+            if not isinstance(worker, dict):
+                return
+            worker["worktree_head"] = assignment.get("head_sha", base)
+            worker.pop("task_base_sha", None)
+            worker.pop("review_base_sha", None)
+            worker.pop("review_head_sha", None)
+            if is_review_agent(agents[args.recipient]):
+                worker["review_base_sha"] = base
+                worker["review_head_sha"] = head
+            else:
+                worker["task_base_sha"] = base
+
+        with_registry(root, record_assignment)
+    elif args.kind == "handoff" and args.sender not in {lead_name, "watchdog"}:
+        handoff = validate_handoff(root, args.sender, registry, base, head)
+        metadata.update(handoff)
+    elif base is not None or head is not None:
+        if base is None or head is None:
+            raise FactoryError("use --base and --head together for this message")
+        if not is_ancestor(root, base, head):
+            raise FactoryError("message base is not an ancestor of message head")
+        metadata.update({"base_sha": base, "head_sha": head})
+
+    path = write_mail(root, args.sender, args.recipient, args.kind, args.message, metadata)
     if args.sender not in {lead_name, "watchdog"}:
         mark_turn_mail_sent(root, args.sender)
     action = ping_recipient(root, args.recipient, urgent=args.urgent)
@@ -1623,7 +1952,13 @@ def parser() -> argparse.ArgumentParser:
     mail.add_argument("sender")
     mail.add_argument("recipient")
     mail.add_argument("message")
-    mail.add_argument("--kind", choices=["message", "blocked", "permission", "handoff"], default="message")
+    mail.add_argument(
+        "--kind",
+        choices=["message", "assignment", "blocked", "permission", "handoff"],
+        default="message",
+    )
+    mail.add_argument("--base", help="assignment or change base commit")
+    mail.add_argument("--head", help="reviewed or completed change commit")
     mail.add_argument("--urgent", action="store_true", help="ping an idle recipient or notify the user")
     mail.set_defaults(handler=command_mail)
 

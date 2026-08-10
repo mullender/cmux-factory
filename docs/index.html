@@ -80,6 +80,7 @@
         <a class="task-card" href="#update" data-task="pull update latest git skill templates"><b>09</b><span><strong>Update the factory</strong><small>Commands, skills, and project rules</small></span></a>
         <a class="task-card" href="#session-review" data-task="review session learn feedback lessons improve instructions"><b>10</b><span><strong>Learn from a factory session</strong><small>Turn repeated feedback into rules</small></span></a>
         <a class="task-card" href="#stop" data-task="stop end shutdown session"><b>11</b><span><strong>Stop a factory session</strong><small>Interrupt workers safely</small></span></a>
+        <a class="task-card" href="#review-commit" data-task="assign builder review commit sha worktree"><b>12</b><span><strong>Review an exact commit</strong><small>Use isolated Git worktrees</small></span></a>
       </div>
       <p id="no-results" class="no-results" hidden>No task matches that filter.</p>
     </section>
@@ -146,10 +147,27 @@ factory init</code></pre></div><p>A second run preserves project rules and print
         <article><h3>Read Lead mail</h3><div class="command"><pre><code>factory inbox lead
 factory inbox lead --archive</code></pre></div></article>
         <article><h3>Send agent mail</h3><div class="command"><pre><code>factory mail builder lead \
-  "The change is ready" --kind handoff</code></pre></div></article>
+  "The change is ready" --kind handoff \
+  --base BASE_SHA --head HEAD_SHA</code></pre></div></article>
       </div>
       <aside class="callout"><strong>Lead-centered mail.</strong> Agents never poll for mail. The Watchdog counts each inbox and wakes an idle recipient. Each worker turn must mail the Lead before it stops. A missing handoff gets one reminder, then a Lead alert. <code>factory status</code> shows each unread count.</aside>
       <aside class="callout warning"><strong>POC limit.</strong> The watchdog reports a closed agent. It does not restart the agent.</aside>
+    </section>
+
+    <section class="tutorial" id="review-commit">
+      <header><p class="task-kicker">I want Reviewer to inspect what Builder committed</p><h2>Review an exact commit</h2><p>Builder and Reviewer use separate worktrees. Reviewer never reads Builder's live files.</p></header>
+      <ol class="steps compact">
+        <li><div><h3>Assign Builder from its current commit</h3><div class="command"><pre><code>factory status
+factory mail lead builder "Make the bounded change" \
+  --kind assignment --base BASE_SHA</code></pre></div></div></li>
+        <li><div><h3>Receive Builder's committed handoff</h3><div class="command"><pre><code>factory inbox lead --archive</code></pre></div><p>The mail contains full <code>base_sha</code> and <code>head_sha</code> fields.</p></div></li>
+        <li><div><h3>Assign that range to Reviewer</h3><div class="command"><pre><code>factory mail lead reviewer "Review this change only" \
+  --kind assignment --base BASE_SHA --head HEAD_SHA</code></pre></div><p>The factory checks out <code>HEAD_SHA</code> and its recorded submodule commits before it sends the mail.</p></div></li>
+        <li><div><h3>Inspect the worktrees when needed</h3><div class="command"><pre><code>git -C .factory/worktrees/builder status
+git -C .factory/worktrees/reviewer status
+factory status</code></pre></div></div></li>
+      </ol>
+      <aside class="callout"><strong>No hidden Git changes.</strong> The factory refuses a dirty worktree. It does not reset, merge, rebase, cherry-pick, publish, or remove a worktree.</aside>
     </section>
 
     <section class="tutorial" id="edit-project">
@@ -248,7 +266,7 @@ git push</code></pre></div></div></li>
       <header><p class="task-kicker">I want to end the current session</p><h2>Stop the factory</h2><p>The command interrupts workers and the watchdog. It leaves tabs open for inspection.</p></header>
       <div class="command"><pre><code>cd <span data-project-path>/path/to/project</span>
 factory stop</code></pre></div>
-      <p>Close the worker and watchdog tabs when you no longer need their output.</p>
+      <p>Close the worker and watchdog tabs when you no longer need their output. The worker worktrees remain for inspection and the next start.</p>
     </section>
 
     <section class="reference" id="reference">

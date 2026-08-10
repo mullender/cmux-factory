@@ -17,6 +17,21 @@ class FactoryTests(unittest.TestCase):
         code = factory.command_init(argparse.Namespace(directory=str(root)))
         self.assertEqual(code, 0)
 
+    def init_git_project(self, root: Path) -> str:
+        self.init_project(root)
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+        subprocess.run(
+            [
+                "git", "-C", str(root),
+                "-c", "user.name=Factory Test",
+                "-c", "user.email=factory@example.invalid",
+                "commit", "-qm", "Initial project",
+            ],
+            check=True,
+        )
+        return factory.git_head(root)
+
     def register_factory(self, root: Path, *, active: bool = True) -> None:
         registry = {
             "active": active,
@@ -50,6 +65,7 @@ class FactoryTests(unittest.TestCase):
             self.assertEqual(config["name"], root.name)
             self.assertTrue((root / ".factory/config/OPERATING_RULES.md").is_file())
             self.assertTrue((root / ".factory/brain/NOW.md").is_file())
+            self.assertIn("worktrees/", (root / ".factory/.gitignore").read_text().splitlines())
             state = json.loads((root / ".factory/template-state.json").read_text())
             self.assertEqual(state["format"], 1)
             self.assertIn("roles/reviewer.md", state["files"])
@@ -168,6 +184,18 @@ class FactoryTests(unittest.TestCase):
             self.assertTrue((root / ".factory/factory.toml").is_file())
             self.assertFalse((nested / ".factory").exists())
 
+    def test_project_root_uses_the_launch_environment_from_a_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.init_project(root)
+            nested = root / ".factory" / "worktrees" / "builder"
+            nested.mkdir(parents=True)
+            with (
+                mock.patch.dict(factory.os.environ, {"FACTORY_PROJECT_ROOT": str(root)}),
+                mock.patch.object(factory.Path, "cwd", return_value=nested),
+            ):
+                self.assertEqual(factory.project_root(None), root.resolve())
+
     def test_init_prints_manual_and_command_line_next_steps(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -234,7 +262,9 @@ class FactoryTests(unittest.TestCase):
             config = factory.load_config(root)
             prompt = factory.compose_prompt(root, "lead", config["agents"]["lead"])
             self.assertIn("send mail to any non-Lead agent", prompt)
-            self.assertIn("factory mail lead RECIPIENT", prompt)
+            self.assertIn("factory mail lead builder", prompt)
+            self.assertIn("factory mail lead reviewer", prompt)
+            self.assertIn("--base BASE_SHA --head HEAD_SHA", prompt)
             self.assertIn("Never poll or wait for mail", prompt)
             self.assertNotIn("Every turn must end with a handoff", prompt)
             self.assertIn("open cross-repository pull request", prompt)
@@ -435,7 +465,7 @@ class FactoryTests(unittest.TestCase):
     def test_start_builds_tabs_and_records_exact_ids(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            self.init_project(root)
+            head = self.init_git_project(root)
             surface_ids = iter(["BUILDER-SURFACE", "REVIEWER-SURFACE", "WATCHDOG-SURFACE"])
             sent: list[tuple[str, ...]] = []
 
@@ -463,6 +493,10 @@ class FactoryTests(unittest.TestCase):
             self.assertEqual(registry["agents"]["lead"]["state"], "working")
             self.assertEqual(registry["agents"]["builder"]["surface_id"], "BUILDER-SURFACE")
             self.assertEqual(registry["agents"]["reviewer"]["surface_id"], "REVIEWER-SURFACE")
+            self.assertEqual(registry["agents"]["builder"]["worktree_head"], head)
+            self.assertEqual(registry["agents"]["reviewer"]["worktree_head"], head)
+            self.assertTrue(Path(registry["agents"]["builder"]["worktree"]).is_dir())
+            self.assertTrue(Path(registry["agents"]["reviewer"]["worktree"]).is_dir())
             self.assertEqual(registry["watchdog"]["surface_id"], "WATCHDOG-SURFACE")
             self.assertTrue(any(call[0] == "rename-tab" for call in sent))
             self.assertFalse(any("--working-directory" in call for call in sent))
@@ -473,9 +507,131 @@ class FactoryTests(unittest.TestCase):
                     call[0] == "send"
                     and call[-1].startswith("cd -- ")
                     and "claude" in call[-1]
+                    and ".factory/worktrees/builder" in call[-1]
+                    and "FACTORY_PROJECT_ROOT=" in call[-1]
                     for call in sent
                 )
             )
+
+    def test_worktree_reuse_refuses_uncommitted_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.init_git_project(root)
+            config = factory.load_config(root)
+            builder = factory.ensure_agent_worktree(root, "builder", config["agents"]["builder"])
+            (builder / "unfinished.txt").write_text("not committed\n")
+
+            with self.assertRaisesRegex(factory.FactoryError, "not clean"):
+                factory.ensure_agent_worktree(root, "builder", config["agents"]["builder"])
+
+    def test_submodule_manifest_refuses_a_commit_mismatch(self) -> None:
+        mismatch = subprocess.CompletedProcess(
+            ["git"],
+            0,
+            stdout="-" + "a" * 40 + " dependency\n",
+            stderr="",
+        )
+        with (
+            mock.patch.object(factory, "git_text", return_value=mismatch),
+            self.assertRaisesRegex(factory.FactoryError, "not at its recorded commit"),
+        ):
+            factory.submodule_manifest(Path("/project"))
+
+    def test_review_assignment_checks_out_the_exact_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base = self.init_git_project(root)
+            config = factory.load_config(root)
+            builder = factory.ensure_agent_worktree(root, "builder", config["agents"]["builder"])
+            reviewer = factory.ensure_agent_worktree(root, "reviewer", config["agents"]["reviewer"])
+            (builder / "change.txt").write_text("bounded change\n")
+            subprocess.run(["git", "-C", str(builder), "add", "change.txt"], check=True)
+            subprocess.run(
+                [
+                    "git", "-C", str(builder),
+                    "-c", "user.name=Factory Test",
+                    "-c", "user.email=factory@example.invalid",
+                    "commit", "-qm", "Bounded change",
+                ],
+                check=True,
+            )
+            head = factory.git_head(builder)
+            registry = {
+                "active": True,
+                "project": str(root),
+                "workspace_id": "WORKSPACE",
+                "lead": "lead",
+                "agents": {
+                    "lead": {"surface_id": "LEAD", "state": "ready", "worktree": str(root)},
+                    "builder": {"surface_id": "BUILDER", "state": "idle", "worktree": str(builder)},
+                    "reviewer": {"surface_id": "REVIEWER", "state": "idle", "worktree": str(reviewer)},
+                },
+                "watchdog": {"surface_id": "WATCHDOG", "state": "ready"},
+            }
+            factory.with_registry(root, lambda target: (target.clear(), target.update(registry)))
+
+            with (
+                mock.patch.dict(factory.os.environ, {"CMUX_SURFACE_ID": "LEAD"}),
+                mock.patch.object(factory, "ping_recipient", return_value="stored"),
+            ):
+                code = factory.command_mail(
+                    argparse.Namespace(
+                        project=str(root),
+                        sender="lead",
+                        recipient="reviewer",
+                        message="Review only this bounded change.",
+                        kind="assignment",
+                        base=base,
+                        head=head,
+                        urgent=False,
+                    )
+                )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(factory.git_head(reviewer), head)
+            self.assertEqual(factory.worktree_changes(reviewer), [])
+            message = factory.unread_mail(root, "reviewer")[0].read_text()
+            self.assertIn(f'base_sha: "{base}"', message)
+            self.assertIn(f'head_sha: "{head}"', message)
+            self.assertIn("submodules: []", message)
+            updated, _ = factory.with_registry(root)
+            self.assertEqual(updated["agents"]["reviewer"]["review_head_sha"], head)
+
+    def test_builder_handoff_must_match_its_clean_committed_head(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base = self.init_git_project(root)
+            config = factory.load_config(root)
+            builder = factory.ensure_agent_worktree(root, "builder", config["agents"]["builder"])
+            registry = {
+                "active": False,
+                "project": str(root),
+                "lead": "lead",
+                "agents": {
+                    "lead": {"state": "ready", "worktree": str(root)},
+                    "builder": {
+                        "state": "idle",
+                        "worktree": str(builder),
+                        "task_base_sha": base,
+                    },
+                },
+            }
+            factory.with_registry(root, lambda target: (target.clear(), target.update(registry)))
+            (builder / "change.txt").write_text("not committed\n")
+
+            with self.assertRaisesRegex(factory.FactoryError, "not clean"):
+                factory.command_mail(
+                    argparse.Namespace(
+                        project=str(root),
+                        sender="builder",
+                        recipient="lead",
+                        message="Ready for review.",
+                        kind="handoff",
+                        base=base,
+                        head=base,
+                        urgent=False,
+                    )
+                )
 
     def test_closed_surface_is_explained_and_not_restarted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -923,6 +1079,8 @@ class FactoryTests(unittest.TestCase):
             output = io.StringIO()
 
             def fake_run(command: list[str], *, check: bool = True):
+                if "rev-parse" in command:
+                    return subprocess.CompletedProcess(command, 0, stdout="a" * 40 + "\n", stderr="")
                 return subprocess.CompletedProcess(command, 0, stdout="PONG\n", stderr="")
 
             def fake_which(command: str):

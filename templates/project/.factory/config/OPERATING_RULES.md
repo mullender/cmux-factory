@@ -9,7 +9,11 @@
   to a non-Lead agent. Agents cannot send mail to themselves.
 - Never poll or wait for inbox mail. The Watchdog wakes an agent that has mail.
 - When the Watchdog wakes you, read and archive your inbox once.
-- Every non-Lead turn must end with a mail handoff to the Lead.
+- Every non-Lead turn must end with `handoff` or `blocked` mail to the Lead.
+- Builder and Reviewer use separate Git worktrees under `.factory/worktrees/`.
+- A code assignment and its handoff must name the full base and head commits.
+- Keep a worker worktree clean before a code handoff. Do not review live files.
+- The superproject commit fixes each submodule commit. Keep all submodules clean.
 - Before `git push`, check whether the exact remote repository and branch are
   the head of an open cross-repository pull request. If they are, do not push
   unless the user explicitly approves updating that pull request.

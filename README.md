@@ -8,7 +8,7 @@ All agents read and write plain files under `.factory/`.
 
 ## Proof-of-concept scope
 
-The proof of concept does eight things:
+The proof of concept does nine things:
 
 1. It uses the current cmux tab as the Lead.
 2. It creates Builder, Reviewer, and Watchdog tabs in the same pane.
@@ -18,6 +18,7 @@ The proof of concept does eight things:
 6. It sends agent messages through local inbox files.
 7. It wakes an idle agent when that agent has unread mail.
 8. It requires each non-Lead turn to end with mail to the Lead.
+9. It gives Builder and Reviewer separate Git worktrees.
 
 The watchdog reports a closed agent surface and tells the Lead. It does not
 restart the agent in this version. Recovery comes after the launch and
@@ -61,10 +62,29 @@ Git ignores the inbox because a permission event can contain command text.
 Durable facts and lessons stay under `.factory/brain/`.
 
 ```sh
-factory mail builder lead "The change is ready for review" --kind handoff
-factory mail lead builder "Please add the focused test"
+factory status
+factory mail lead builder "Please add the focused test" \
+  --kind assignment --base BASE_SHA
+factory mail builder lead "The change is ready for review" \
+  --kind handoff --base BASE_SHA --head HEAD_SHA
 factory inbox lead --archive
 ```
+
+## Commit-based review
+
+Builder works on the persistent `factory/builder` branch in
+`.factory/worktrees/builder/`. Reviewer uses a detached worktree in
+`.factory/worktrees/reviewer/`. A review assignment checks out the exact head
+commit and its recorded submodule commits before it sends mail to Reviewer.
+
+```sh
+factory mail lead reviewer "Review this parser change only" \
+  --kind assignment --base BASE_SHA --head HEAD_SHA
+```
+
+The factory refuses to move or reuse a dirty worker worktree. It does not reset,
+merge, rebase, cherry-pick, or remove worktrees. `factory status` shows each
+worktree path, commit, and clean state.
 
 ## Install
 
@@ -142,7 +162,8 @@ factory update
 factory update --no-pull --use-upstream  # accept all reviewed upstream rules
 factory events --follow
 factory check-in builder working "Investigating the parser"
-factory mail builder lead "The parser is ready" --kind handoff
+factory mail builder lead "The parser is ready" \
+  --kind handoff --base BASE_SHA --head HEAD_SHA
 factory inbox lead --archive
 factory note "Builder proposed a service when one function was enough"
 factory stop
@@ -168,7 +189,7 @@ GitHub Pages must use the `main` branch and `/docs` directory.
 ## Current limits
 
 - No automatic restart
-- No worktree management
+- No automatic merge, rebase, reset, or worktree cleanup
 - No message queue
 - No GitHub watcher
 - No database

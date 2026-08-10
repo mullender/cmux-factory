@@ -14,8 +14,9 @@ The command finds the Git root and creates `.factory` there. If a valid factory
 already exists, the command preserves project rules, refreshes safe metadata,
 and prints `READY`. This makes the command safe to run again.
 
-Outside a Git project, the command uses the current directory. You can also
-give it a directory:
+Outside a Git project, the command uses the current directory. You can inspect
+the created files, but `factory start` needs a Git repository with at least one
+commit. You can also give `factory init` a directory:
 
 ```sh
 factory init /path/to/project
@@ -45,7 +46,8 @@ claude /start-factory
 ```
 
 The Lead checks the project and starts the other agents in tabs in the same
-cmux workspace.
+cmux workspace. Builder starts in `.factory/worktrees/builder/`. Reviewer starts
+in `.factory/worktrees/reviewer/`. The worktrees remain after `factory stop`.
 
 ## Start from an existing cmux terminal
 
@@ -91,9 +93,7 @@ factory inbox lead --archive
 Agents can send messages without writing into another active prompt:
 
 ```sh
-factory mail builder lead "The change is ready for review" --kind handoff
 factory mail builder lead "I need a decision" --kind blocked --urgent
-factory mail lead builder "Please add the focused test"
 ```
 
 Builder, Reviewer, and Watchdog can send mail only to the Lead. Only the Lead
@@ -115,6 +115,44 @@ see the Watchdog observation, decision, action, and result.
 Each Stop record includes the cmux event ID, agent state, handoff state, and
 reminder count. This evidence will show whether the cmux Stop hook is reliable
 enough for the handoff rule.
+
+## Assign and review a committed change
+
+Get the Builder base from `factory status`, or use the current Builder commit.
+Then send one bounded task:
+
+```sh
+factory mail lead builder "Add the focused parser test" \
+  --kind assignment --base BASE_SHA
+```
+
+Builder commits the result and sends the exact range:
+
+```sh
+factory mail builder lead "Ready. Focused tests pass." \
+  --kind handoff --base BASE_SHA --head HEAD_SHA
+```
+
+Send that same range to Reviewer:
+
+```sh
+factory mail lead reviewer "Review the parser test change only" \
+  --kind assignment --base BASE_SHA --head HEAD_SHA
+```
+
+The assignment moves only the clean, idle Reviewer worktree. It checks out
+`HEAD_SHA` in detached mode, updates submodules to the commits recorded by the
+superproject, and records the commit data in the mail file. Reviewer reports on
+`BASE_SHA..HEAD_SHA` and returns the same values in its handoff.
+
+If a worker worktree has uncommitted files, the factory stops and explains the
+files. It never resets them. Inspect the state with:
+
+```sh
+factory status
+git -C .factory/worktrees/builder status
+git -C .factory/worktrees/reviewer status
+```
 
 ## Next steps
 
