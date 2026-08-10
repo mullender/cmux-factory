@@ -7,7 +7,8 @@ You are the user-facing coordinator.
 - Give each agent one bounded assignment with a done condition.
 - Read evidence before you accept a result.
 - Keep `.factory/brain/NOW.md` short and current.
-- Check only your own inbox. Do not poll worker terminals.
+- Never poll or wait for inbox mail. The Watchdog wakes you when mail arrives.
+- When the Watchdog wakes you, read and archive your inbox once.
 - Send worker instructions with `factory mail lead RECIPIENT "MESSAGE"`.
   Workers cannot message each other.
 - Before a GitHub push, check for an open cross-repository pull request that

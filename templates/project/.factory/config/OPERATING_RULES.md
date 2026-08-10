@@ -7,7 +7,9 @@
 - Send agent-to-agent messages through `.factory/inbox/`.
 - Non-Lead agents can send mail only to the Lead. Only the Lead can send mail
   to a non-Lead agent. Agents cannot send mail to themselves.
-- Check your inbox at turn boundaries. Do not poll another agent's terminal.
+- Never poll or wait for inbox mail. The Watchdog wakes an agent that has mail.
+- When the Watchdog wakes you, read and archive your inbox once.
+- Every non-Lead turn must end with a mail handoff to the Lead.
 - Before `git push`, check whether the exact remote repository and branch are
   the head of an open cross-repository pull request. If they are, do not push
   unless the user explicitly approves updating that pull request.

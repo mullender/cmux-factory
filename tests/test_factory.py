@@ -207,9 +207,11 @@ class FactoryTests(unittest.TestCase):
             self.assertIn("You implement one bounded assignment", prompt)
             self.assertIn("factory check-in builder", prompt)
             self.assertIn("factory inbox builder", prompt)
-            self.assertIn("Do not poll another agent's terminal", prompt)
+            self.assertIn("Never poll or wait for mail", prompt)
+            self.assertNotIn("at the start and end of each turn", prompt)
             self.assertIn("send mail only to the Lead", prompt)
             self.assertIn("factory mail builder lead", prompt)
+            self.assertIn("Every turn must end with a handoff", prompt)
             self.assertIn("open cross-repository pull request", prompt)
             self.assertIn("explicit user approval", prompt)
 
@@ -233,6 +235,8 @@ class FactoryTests(unittest.TestCase):
             prompt = factory.compose_prompt(root, "lead", config["agents"]["lead"])
             self.assertIn("send mail to any non-Lead agent", prompt)
             self.assertIn("factory mail lead RECIPIENT", prompt)
+            self.assertIn("Never poll or wait for mail", prompt)
+            self.assertNotIn("Every turn must end with a handoff", prompt)
             self.assertIn("open cross-repository pull request", prompt)
             self.assertIn("do not push without explicit approval", prompt)
 
@@ -531,6 +535,8 @@ class FactoryTests(unittest.TestCase):
             working, _ = factory.with_registry(root)
             self.assertEqual(working["agents"]["builder"]["state"], "working")
 
+            factory.mark_turn_mail_sent(root, "builder")
+
             factory.handle_watch_event(
                 root,
                 {
@@ -542,6 +548,81 @@ class FactoryTests(unittest.TestCase):
             )
             idle, _ = factory.with_registry(root)
             self.assertEqual(idle["agents"]["builder"]["state"], "idle")
+            journal = (root / ".factory/run/watchdog.jsonl").read_text()
+            self.assertIn('"phase": "STOP"', journal)
+            self.assertIn("handoff_sent=true", journal)
+
+    def test_stop_without_worker_handoff_sends_one_reminder(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.init_project(root)
+            self.register_factory(root)
+            factory.begin_agent_turn(root, "builder")
+            turns: list[tuple[str, str, str]] = []
+
+            with mock.patch.object(
+                factory,
+                "send_turn",
+                side_effect=lambda workspace, surface, text: turns.append((workspace, surface, text)),
+            ):
+                factory.handle_agent_stop(root, "builder", "STOP-1", now=100.0)
+
+            self.assertEqual(len(turns), 1)
+            self.assertEqual(turns[0][:2], ("WORKSPACE", "BUILDER"))
+            self.assertIn("ended without mail to Lead", turns[0][2])
+            registry, _ = factory.with_registry(root)
+            builder = registry["agents"]["builder"]
+            self.assertEqual(builder["state"], "working")
+            self.assertEqual(builder["handoff_reminders"], 1)
+
+    def test_duplicate_stop_does_not_send_a_second_handoff_reminder(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.init_project(root)
+            self.register_factory(root)
+            factory.begin_agent_turn(root, "builder")
+
+            with mock.patch.object(factory, "send_turn") as send_turn:
+                factory.handle_agent_stop(root, "builder", "STOP-1", now=100.0)
+                factory.handle_agent_stop(root, "builder", "STOP-2", now=100.1)
+
+            self.assertEqual(send_turn.call_count, 1)
+            journal = (root / ".factory/run/watchdog.jsonl").read_text()
+            self.assertIn("duplicate Stop hook ignored", journal)
+
+    def test_second_turn_without_worker_handoff_alerts_lead(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.init_project(root)
+            self.register_factory(root)
+            factory.begin_agent_turn(root, "builder")
+
+            with (
+                mock.patch.object(factory, "send_turn"),
+                mock.patch.object(factory, "ping_recipient", return_value="stored"),
+            ):
+                factory.handle_agent_stop(root, "builder", "STOP-1", now=100.0)
+                factory.record_prompt_submit(root, "builder")
+                factory.handle_agent_stop(root, "builder", "STOP-2", now=102.0)
+
+            registry, _ = factory.with_registry(root)
+            self.assertEqual(registry["agents"]["builder"]["state"], "needs-attention")
+            mail = factory.unread_mail(root, "lead")
+            self.assertEqual(len(mail), 1)
+            self.assertIn("ended two turns without the required Lead handoff", mail[0].read_text())
+
+    def test_lead_stop_does_not_require_an_outbound_handoff(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.init_project(root)
+            self.register_factory(root)
+
+            with mock.patch.object(factory, "send_turn") as send_turn:
+                factory.handle_agent_stop(root, "lead", "STOP-LEAD", now=100.0)
+
+            send_turn.assert_not_called()
+            registry, _ = factory.with_registry(root)
+            self.assertEqual(registry["agents"]["lead"]["state"], "idle")
 
     def test_permission_request_writes_lead_mail_and_pings_an_idle_lead(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -779,6 +860,8 @@ class FactoryTests(unittest.TestCase):
                 mock.patch.object(factory, "ping_recipient", return_value="stored"),
             ):
                 self.assertEqual(send("builder", "lead"), 0)
+                registry, _ = factory.with_registry(root)
+                self.assertTrue(registry["agents"]["builder"]["turn_mail_sent"])
                 with self.assertRaisesRegex(factory.FactoryError, "builder, not lead"):
                     send("lead", "reviewer")
 

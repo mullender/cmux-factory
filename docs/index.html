@@ -148,7 +148,7 @@ factory inbox lead --archive</code></pre></div></article>
         <article><h3>Send agent mail</h3><div class="command"><pre><code>factory mail builder lead \
   "The change is ready" --kind handoff</code></pre></div></article>
       </div>
-      <aside class="callout"><strong>Lead-centered mail.</strong> The Watchdog and workers can message only the Lead. Only the Lead can message workers. The Watchdog counts each inbox every two seconds and wakes an idle agent that has unread mail. <code>factory status</code> shows each unread count.</aside>
+      <aside class="callout"><strong>Lead-centered mail.</strong> Agents never poll for mail. The Watchdog counts each inbox and wakes an idle recipient. Each worker turn must mail the Lead before it stops. A missing handoff gets one reminder, then a Lead alert. <code>factory status</code> shows each unread count.</aside>
       <aside class="callout warning"><strong>POC limit.</strong> The watchdog reports a closed agent. It does not restart the agent.</aside>
     </section>
 

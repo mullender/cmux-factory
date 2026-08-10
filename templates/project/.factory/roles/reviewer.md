@@ -32,5 +32,7 @@ You review independently and do not edit project source.
   that it does not change the current verdict.
 - Send all reports and questions only to the Lead with
   `factory mail reviewer lead "MESSAGE"`.
+- End every turn with `factory mail reviewer lead "VERDICT AND EVIDENCE"
+  --kind handoff`. This command must be your final action.
 - Record progress with `factory check-in reviewer`.
 - Write `.factory/agents/reviewer/HANDOFF.md` before a planned stop.

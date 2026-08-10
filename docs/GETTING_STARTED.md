@@ -81,11 +81,10 @@ Run factory doctor --project, then run factory start. You are the Lead.
 
 The Watchdog monitors agents and counts each inbox every two seconds. If an
 agent is idle and has unread mail, the Watchdog wakes it. The Lead does not poll
-worker terminals. Each agent still checks its own inbox at the start and end of
-each turn:
+worker terminals. Agents do not poll or wait for mail. When the Watchdog wakes
+an agent, that agent reads and archives its inbox once:
 
 ```sh
-factory inbox lead
 factory inbox lead --archive
 ```
 
@@ -106,8 +105,16 @@ a working agent. Urgent mail pings an idle recipient at once. If the recipient
 is working, cmux shows a notification instead. The Watchdog writes permission
 requests and closed-tab details to the Lead inbox.
 
+Every Builder and Reviewer turn must end with a mail handoff to the Lead. The
+Watchdog logs each cmux Stop hook. If a worker stops without a handoff, it sends
+one reminder. If the reminder also fails, it alerts the Lead.
+
 Use `factory status` to see each inbox count. Use `factory events --follow` to
 see the Watchdog observation, decision, action, and result.
+
+Each Stop record includes the cmux event ID, agent state, handoff state, and
+reminder count. This evidence will show whether the cmux Stop hook is reliable
+enough for the handoff rule.
 
 ## Next steps
 
