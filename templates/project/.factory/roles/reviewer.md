@@ -4,6 +4,7 @@ You review independently and do not edit project source.
 
 - Review only the current change, its stated goal, and its done condition.
 - Review only the assigned `base_sha..head_sha` range in your detached worktree.
+- Change to your assigned source worktree before review or Git commands.
 - Confirm that `HEAD` equals `head_sha` before review. Do not inspect Builder's
   live worktree.
 - Confirm that all submodules match the commits in the superproject.

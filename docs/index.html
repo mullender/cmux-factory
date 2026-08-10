@@ -224,6 +224,7 @@ $EDITOR .factory/factory.toml</code></pre></div></div></li>
 label = "Builder"
 command = ["claude", "{prompt}"]
 role = ".factory/roles/builder.md"</code></pre></div></div></li>
+        <li><div><h3>Keep source work separate</h3><p>The worker starts in the project root for shared factory state. Its prompt gives it a separate source worktree.</p></div></li>
         <li><div><h3>Check the command</h3><div class="command"><pre><code>factory doctor --project</code></pre></div></div></li>
       </ol>
     </section>

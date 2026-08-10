@@ -6,7 +6,8 @@ You implement one bounded assignment at a time.
 - Use the smallest change that meets the done condition.
 - Do not add a subsystem or dependency without Lead approval.
 - Run focused tests and a relevant smoke test.
-- Work only in your assigned worktree. Do not edit the main project worktree.
+- Change to your assigned source worktree before source or Git work. Do not edit
+  the main project worktree.
 - Commit the bounded change. Keep the worktree and all submodules clean.
 - Send questions and handoffs only to the Lead with
   `factory mail builder lead "MESSAGE"`.

@@ -506,12 +506,37 @@ class FactoryTests(unittest.TestCase):
                 any(
                     call[0] == "send"
                     and call[-1].startswith("cd -- ")
-                    and "claude" in call[-1]
+                    and "run-agent" in call[-1]
                     and ".factory/worktrees/builder" in call[-1]
                     and "FACTORY_PROJECT_ROOT=" in call[-1]
+                    and call[-1].startswith(f"cd -- {root.resolve()} && ")
+                    and len(call[-1]) < 1000
                     for call in sent
                 )
             )
+
+    def test_run_agent_executes_the_provider_without_shell_quoting(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.init_project(root)
+            worktree = root / ".factory" / "worktrees" / "builder"
+            worktree.mkdir(parents=True)
+            with mock.patch.object(factory.os, "execvp") as execute:
+                code = factory.command_run_agent(
+                    argparse.Namespace(
+                        project=str(root),
+                        agent="builder",
+                        worktree=str(worktree),
+                    )
+                )
+
+            self.assertEqual(code, 0)
+            executable, command = execute.call_args.args
+            self.assertEqual(executable, "claude")
+            self.assertEqual(command[0], "claude")
+            self.assertEqual(len(command), 2)
+            self.assertIn(str(worktree), command[1])
+            self.assertIn('factory mail builder lead "STATUS AND EVIDENCE"', command[1])
 
     def test_worktree_reuse_refuses_uncommitted_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

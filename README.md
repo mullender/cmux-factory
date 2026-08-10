@@ -76,6 +76,8 @@ Builder works on the persistent `factory/builder` branch in
 `.factory/worktrees/builder/`. Reviewer uses a detached worktree in
 `.factory/worktrees/reviewer/`. A review assignment checks out the exact head
 commit and its recorded submodule commits before it sends mail to Reviewer.
+Worker processes start in the main project root so they can use shared factory
+state. Their prompts require source and Git work in the named worktree.
 
 ```sh
 factory mail lead reviewer "Review this parser change only" \

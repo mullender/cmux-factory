@@ -11,6 +11,8 @@
 - When the Watchdog wakes you, read and archive your inbox once.
 - Every non-Lead turn must end with `handoff` or `blocked` mail to the Lead.
 - Builder and Reviewer use separate Git worktrees under `.factory/worktrees/`.
+- Worker processes start in the main project root so they can use shared factory
+  state. They must change to their named source worktree before source work.
 - A code assignment and its handoff must name the full base and head commits.
 - Keep a worker worktree clean before a code handoff. Do not review live files.
 - The superproject commit fixes each submodule commit. Keep all submodules clean.
