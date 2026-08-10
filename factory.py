@@ -24,7 +24,7 @@ from typing import Any, Callable
 
 SOURCE_ROOT = Path(__file__).resolve().parent
 TEMPLATE_ROOT = SOURCE_ROOT / "templates" / "project" / ".factory"
-VERSION = "0.4.0.0"
+VERSION = "0.4.0.1"
 TEMPLATE_STATE_FORMAT = 1
 MANAGED_TEMPLATE_PATTERNS = (
     "config/*.md",
@@ -713,10 +713,12 @@ def compose_prompt(
         )
         worktree = source_worktree or worktree_path(root, name)
         worktree_rule = (
-            f"# Git worktree\n\nYour source worktree is `{worktree}`. Edit and run Git only in this "
-            "worktree. Do not edit the main project worktree. Keep this worktree clean before a "
-            "handoff. Builder must commit the change. Reviewer must review only the assigned "
-            "`base_sha..head_sha` range and must not change source."
+            f"# Git worktree\n\nYour process starts in the main project root so you can use shared "
+            f"factory state. Your source worktree is `{worktree}`. Change to that path before "
+            "source or Git work. Never edit source or run a source-changing Git command in the "
+            "main project worktree. Keep your source worktree clean before a handoff. Builder must "
+            "commit the change. Reviewer must review only the assigned `base_sha..head_sha` range "
+            "and must not change source."
         )
     return "\n\n".join(
         [
@@ -741,6 +743,31 @@ def compose_prompt(
             ),
         ]
     )
+
+
+def command_run_agent(args: argparse.Namespace) -> int:
+    root = project_root(args.project)
+    config = load_config(root)
+    agent = config["agents"].get(args.agent)
+    if not isinstance(agent, dict) or agent.get("current"):
+        raise FactoryError(f"cannot launch worker agent: {args.agent}")
+    source_worktree = Path(args.worktree).resolve()
+    expected = worktree_path(root, args.agent).resolve()
+    if source_worktree != expected:
+        raise FactoryError(f"unexpected worktree for {args.agent}: {source_worktree}")
+    prompt = compose_prompt(root, args.agent, agent, source_worktree)
+    values = {
+        "{prompt}": prompt,
+        "{project}": str(root),
+        "{factory}": str(root / ".factory"),
+        "{worktree}": str(Path.cwd()),
+    }
+    command = [values.get(item, item) for item in agent["command"]]
+    try:
+        os.execvp(command[0], command)
+    except OSError as exc:
+        raise FactoryError(f"cannot launch {command[0]}: {exc}") from exc
+    return 0
 
 
 def wait_for_surface_text(workspace_id: str, surface_id: str, text: str, timeout: float = 3.0) -> None:
@@ -1145,12 +1172,20 @@ def command_start(args: argparse.Namespace) -> int:
     for name, agent in config["agents"].items():
         if agent.get("current"):
             continue
-        prompt = compose_prompt(root, name, agent, worktrees[name])
-        command = [prompt if item == "{prompt}" else item for item in agent["command"]]
+        command = [
+            sys.executable,
+            str(SOURCE_ROOT / "factory.py"),
+            "run-agent",
+            "--project",
+            str(root),
+            "--worktree",
+            str(worktrees[name]),
+            name,
+        ]
         agent_command = shlex.join(["env", f"FACTORY_PROJECT_ROOT={root}", *command])
-        launch = f"cd -- {shlex.quote(str(worktrees[name]))} && {agent_command}"
+        launch = f"cd -- {shlex.quote(str(root))} && {agent_command}"
         send_turn(workspace_id, agents[name]["surface_id"], launch)
-        set_agent_state(root, name, "launched", f"launched {command[0]}")
+        set_agent_state(root, name, "launched", f"launched {agent['command'][0]}")
 
     watch_command = shlex.join(
         [sys.executable, str(SOURCE_ROOT / "factory.py"), "watch", "--project", str(root)]
@@ -1946,6 +1981,12 @@ def parser() -> argparse.ArgumentParser:
     add_project_option(note)
     note.add_argument("text")
     note.set_defaults(handler=command_note)
+
+    run_agent = subparsers.add_parser("run-agent", help=argparse.SUPPRESS)
+    add_project_option(run_agent)
+    run_agent.add_argument("--worktree", required=True)
+    run_agent.add_argument("agent")
+    run_agent.set_defaults(handler=command_run_agent)
 
     mail = subparsers.add_parser("mail", help="write a message to an agent inbox")
     add_project_option(mail)

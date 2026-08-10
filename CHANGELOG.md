@@ -2,6 +2,15 @@
 
 This file records user-visible changes to cmux-factory.
 
+## [0.4.0.1] - 2026-08-09
+
+### Fixed
+
+- Launch workers with a short command so cmux cannot truncate a long quoted
+  agent prompt.
+- Start worker processes in the project root for shared factory state, while
+  their prompts direct source and Git work to separate worktrees.
+
 ## [0.4.0.0] - 2026-08-09
 
 ### Added

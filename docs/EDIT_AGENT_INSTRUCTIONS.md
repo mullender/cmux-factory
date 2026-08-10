@@ -228,7 +228,17 @@ factory doctor --project
 ```
 
 The current POC supports command-line agents that accept a prompt argument. It
-does not use a provider SDK.
+does not use a provider SDK. Keep `{prompt}` as a separate argument. You can
+also use these separate argument placeholders:
+
+| Placeholder | Value |
+| --- | --- |
+| `{project}` | Main project worktree |
+| `{factory}` | Shared `.factory` control directory |
+| `{worktree}` | This agent's source worktree |
+
+Worker processes start in `{project}`. This gives them access to shared factory
+state. Their prompts name a separate `{worktree}` for source and Git work.
 
 ## Related guides
 

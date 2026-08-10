@@ -47,7 +47,9 @@ claude /start-factory
 
 The Lead checks the project and starts the other agents in tabs in the same
 cmux workspace. Builder starts in `.factory/worktrees/builder/`. Reviewer starts
-in `.factory/worktrees/reviewer/`. The worktrees remain after `factory stop`.
+with `.factory/worktrees/reviewer/` as its source worktree. Worker processes use
+the main project root for shared factory state, then change to their named
+worktree for source and Git work. The worktrees remain after `factory stop`.
 
 ## Start from an existing cmux terminal
 
