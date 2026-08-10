@@ -1,4 +1,5 @@
 run/
 inbox/
 update/
+worktrees/
 agents/*/STATUS.json

@@ -93,6 +93,25 @@ same rule, so a prompt change cannot bypass it.
 Inbox files are local runtime data. Git ignores `.factory/inbox/`. Move facts
 that must survive the session into `.factory/brain/`.
 
+## Keep commit-based review intact
+
+Builder and Reviewer run in separate worktrees. Keep these rules when you edit
+their prompts:
+
+```text
+Lead -> Builder:  assignment + base_sha
+Builder -> Lead:  committed, clean handoff + base_sha + head_sha
+Lead -> Reviewer: assignment + the same base_sha + head_sha
+Reviewer -> Lead: verdict + the same base_sha + head_sha
+```
+
+Reviewer must inspect only `base_sha..head_sha` in its detached worktree. It
+must not inspect Builder's live files. Builder must commit its result and keep
+all submodules clean before a code handoff.
+
+The factory keeps worktrees under `.factory/worktrees/`. It refuses to reset a
+dirty worktree. It does not merge or publish the result for the Lead.
+
 ## Keep Reviewer findings in scope
 
 The Reviewer reports two separate groups:

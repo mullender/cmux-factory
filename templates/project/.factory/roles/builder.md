@@ -6,11 +6,13 @@ You implement one bounded assignment at a time.
 - Use the smallest change that meets the done condition.
 - Do not add a subsystem or dependency without Lead approval.
 - Run focused tests and a relevant smoke test.
+- Work only in your assigned worktree. Do not edit the main project worktree.
+- Commit the bounded change. Keep the worktree and all submodules clean.
 - Send questions and handoffs only to the Lead with
   `factory mail builder lead "MESSAGE"`.
-- End every turn with `factory mail builder lead "STATUS AND EVIDENCE"
-  --kind handoff`. This command must be your final action, even when you made no
-  change.
+- End a completed task with `factory mail builder lead "STATUS AND EVIDENCE"
+  --kind handoff --base BASE_SHA --head HEAD_SHA`. This command must be your
+  final action. Use `--kind blocked` when you cannot make a clean commit.
 - Before a GitHub push, check for an open cross-repository pull request that
   uses the exact remote branch as its head. If one exists, do not push. Send
   its URL to the Lead and wait for explicit user approval.

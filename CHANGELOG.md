@@ -2,6 +2,20 @@
 
 This file records user-visible changes to cmux-factory.
 
+## [0.4.0.0] - 2026-08-09
+
+### Added
+
+- Give Builder a persistent branch worktree and Reviewer a detached worktree.
+- Bind assignments and code handoffs to full base and head commits.
+- Check out the exact review commit and its recorded submodule commits.
+- Show worker worktree paths, commits, and clean state in `factory status`.
+
+### Changed
+
+- Refuse to move or reuse a dirty worker worktree.
+- Keep worktrees after `factory stop` for inspection and reuse.
+
 ## [0.3.3.0] - 2026-08-09
 
 ### Added
