@@ -2,6 +2,19 @@
 
 This file records user-visible changes to cmux-factory.
 
+## [0.3.3.0] - 2026-08-09
+
+### Added
+
+- Log every cmux Stop hook with the worker handoff state.
+- Remind a worker once when its turn ends without mail to the Lead.
+- Alert the Lead when the reminder turn also ends without a handoff.
+
+### Changed
+
+- Tell agents never to poll or wait for inbox mail.
+- Require every non-Lead turn to end with a mail handoff to the Lead.
+
 ## [0.3.2.0] - 2026-08-09
 
 ### Added
